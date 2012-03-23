@@ -9,9 +9,13 @@ module Serializable (
                      deserialize,
                      SerializableByShow,
                      storeInByteString,
-                     loadfromBytes,
+                     loadFromBytes,
+                     hStore,
+                     hLoad,
+                     hLoads,
                      store,
-                     load
+                     load,
+                     loads
                     ) where
 
 import IntegralBytes
@@ -27,6 +31,7 @@ import Data.Char
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as BS
+import qualified Data.ByteString.Lazy as BL
 
 import Data.Word
 import Data.Bits
@@ -37,6 +42,10 @@ import System.Environment
 import qualified Data.Text as T
 import Data.Text.Encoding
 import Data.Array.IArray
+
+-----------------
+
+type LazyByteString = BL.ByteString
 
 -----------------
 
@@ -54,9 +63,10 @@ data VersionID = VersionID Word64
                | ProgramUniqueVID 
                 deriving (Eq, Show)
                
--- TODO
+-- TODO: Better method (e.g. hashing) than xorring
 combineVIDs :: [VersionID] -> VersionID
-combineVIDs = undefined
+combineVIDs vids | ProgramUniqueVID `elem` vids = ProgramUniqueVID
+                 | otherwise =  VersionID $ foldl' xor 0 $ map (\(VersionID i) -> i) vids
 
 data Serialized = Serialized {dataType :: TypeID, serializerVersion :: VersionID, dataPacket :: ByteString} deriving Show
 
@@ -79,7 +89,7 @@ deserialize (Serialized tid sv dp) | tid /= typeID result = Nothing
 
 -----------------
 
-storeInByteString :: Serialized -> IO ByteString
+storeInByteString :: Serialized -> IO LazyByteString
 storeInByteString obj = do pid <- programVersionID
                            -- Prepend version identifier with 0 if manual or 1 if generated
                            let vid = B.pack $ case serializerVersion obj of
@@ -87,9 +97,9 @@ storeInByteString obj = do pid <- programVersionID
                                                ProgramUniqueVID -> 1 : bytes pid
                            let tid = BS.pack $ dataType obj ++ "\0"
                            let pdata = dataPacket obj
-                           let datalen = B.pack $ bytes $ BS.length pdata
+                           let datalen = B.pack $ bytes $ B.length pdata
                            let libid = BS.pack libraryVersion
-                           return $ BS.concat 
+                           return $ BL.fromChunks
                                      [
                                       libid,   -- Identifier of serialization library
                                       vid,     -- Version identifier
@@ -99,8 +109,8 @@ storeInByteString obj = do pid <- programVersionID
                                      ]
                             
 -- TODO: throw proper exception on failure
-loadfromBytes :: ByteString -> IO (Serialized, ByteString)
-loadfromBytes str = do let str0 = B.unpack str
+loadFromBytes :: LazyByteString -> IO (Serialized, LazyByteString)
+loadFromBytes str = do let str0 = BL.unpack str
                        let (lid, str1) = splitAt (length libraryVersion) str0
                        let (vid, str2) = splitAt 9 str1
                        let (tid, str3) = (takeWhile (/= 0) str2, drop (length tid + 1) str2)
@@ -115,22 +125,51 @@ loadfromBytes str = do let str0 = B.unpack str
                                              return ProgramUniqueVID
                                 _      -> error "Invalid data"
                             
-                       return (Serialized (asciiString tid) pvid (B.pack dat), B.pack str5)
+                       return (Serialized (asciiString tid) pvid (B.pack dat), BL.pack str5)
  where asciiString :: [Word8] -> String
        asciiString = map $ chr . fromIntegral
                             
 
-store :: Serialized -> FilePath -> IO ()
-store ob path = storeInByteString ob >>= BS.writeFile path
+hStore :: Handle -> Serialized -> IO ()
+hStore h ob = storeInByteString ob >>= BL.hPutStr h
+
+hLoads :: Handle -> IO [Serialized]
+hLoads h = BL.hGetContents h >>= loadContent
+ where loadContent str | BL.null str = return []
+                       | otherwise   = do (x, rest) <- loadFromBytes str
+                                          xs <- loadContent rest
+                                          return (x:xs)
+                                          
+hLoad :: Handle -> IO Serialized
+hLoad h = do xs <- hLoads h
+             case xs of
+              []  -> error "Nothing to be read from handle."
+              [x] -> return x
+              _   -> error "Handle contains more data than a single serialized object."
+                                           
+
+store :: FilePath -> Serialized -> IO ()
+store path ob = withBinaryFile path WriteMode $ flip hStore ob
+
+stores :: FilePath -> [Serialized] -> IO ()
+stores path obs = withBinaryFile path WriteMode 
+                    $ \h -> mapM_ (hStore h) obs
 
 load :: FilePath -> IO Serialized
-load path = BS.readFile path >>= fmap fst . loadfromBytes
+load path = withBinaryFile path ReadMode hLoad
+
+loads :: FilePath -> IO [Serialized]
+loads path = withBinaryFile path ReadMode hLoads
+
 
 -----------------
 
-class (Show a, Read a, Typeable a) => SerializableByShow a
+class (Show a, Read a, Typeable a) => SerializableByShow a where
+ showVersionID :: a -> VersionID
+ showVersionID _ = VersionID 0
 
 instance SerializableByShow a => Serializable a where
+ serialVersionID = showVersionID
  toBytes   = B.pack . concat . map (bytes . ord) . show
  fromBytes = read . stringify . B.unpack
   where stringify [] = ""
@@ -139,10 +178,12 @@ instance SerializableByShow a => Serializable a where
 -----------------
 
 instance Serializable ByteString where
+ serialVersionID _ = VersionID 1
  toBytes = id
  fromBytes = id
  
 instance Serializable a => Serializable [a] where
+ serialVersionID _ = VersionID 1
  toBytes [] = BS.empty
  toBytes (x:xs) = BS.concat [B.pack $ bytes $ BS.length sx, sx, toBytes xs]
   where sx = toBytes x
@@ -152,38 +193,46 @@ instance Serializable a => Serializable [a] where
                               in fromBytes str2 : fromBytes rest     
                               
 instance Serializable String where
+ serialVersionID _ = VersionID 1
  toBytes = encodeUtf8 . T.pack
  fromBytes = T.unpack . decodeUtf8
                               
 instance Serializable a => Serializable (Maybe a) where
+ serialVersionID _ = VersionID 1
  toBytes Nothing  = BS.empty
  toBytes (Just x) = B.cons 0 $ toBytes x
  fromBytes str | BS.null str = Nothing
                | otherwise   = Just $ fromBytes $ B.tail str
                
 instance Serializable () where
+ serialVersionID _ = VersionID 1
  toBytes   _ = B.empty
  fromBytes _ = ()
                
 instance (Serializable a, Serializable b) => Serializable (a,b) where
+ serialVersionID _ = VersionID 1
  toBytes (a,b) = toBytes [Left a, Right b]
  fromBytes str = let [Left a, Right b] = fromBytes str in (a,b)
  
 instance (Serializable a, Serializable b) => Serializable (Either a b) where
+ serialVersionID _ = VersionID 1
  toBytes (Left  x) = B.cons 0 $ toBytes x
  toBytes (Right x) = B.cons 1 $ toBytes x
  fromBytes str | B.head str == 0 = Left  $ fromBytes $ B.tail str
                | otherwise       = Right $ fromBytes $ B.tail str
                
 instance Serializable Char where
+ serialVersionID _ = VersionID 1
  toBytes = toBytes . ord
  fromBytes = chr . fromBytes
  
 instance Serializable Int where
+ serialVersionID _ = VersionID 1
  toBytes = B.pack . bytes
  fromBytes = unbytes . B.unpack
  
 instance (IArray ar e, Typeable2 ar, Ix i, Serializable i, Serializable e) => Serializable (ar i e) where
+ serialVersionID _ = VersionID 1
  toBytes ar   = toBytes (bounds ar, elems ar)
  fromBytes ar = listArray bnds els
   where (bnds, els) = fromBytes ar
@@ -195,7 +244,6 @@ instance SerializableByShow Float
 instance SerializableByShow Double
 instance SerializableByShow Word
 instance (Read a, Typeable a, Integral a) => SerializableByShow (Ratio a)
-
 
 
 

@@ -15,6 +15,7 @@ import qualified Data.ByteString.Lazy as BSL
 
 type LazyByteString = BSL.ByteString
 
+-- TODO: Use (MD5) hash instead?
 checksum :: (Integral a, Integral b) => [a] -> b
 checksum = foldl' (+) 0 . map fromIntegral
 
