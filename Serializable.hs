@@ -8,6 +8,7 @@ module Serializable (
                      serialize,
                      deserialize,
                      SerializableByShow,
+                     LazyByteString,
                      storeInByteString,
                      loadFromBytes,
                      hStore,
@@ -46,7 +47,7 @@ import Data.Array.IArray
 -----------------
 
 type LazyByteString = BL.ByteString
-
+ 
 -----------------
 
 type TypeID = String
