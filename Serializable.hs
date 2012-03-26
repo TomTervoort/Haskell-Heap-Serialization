@@ -5,6 +5,8 @@ module Serializable (
                      VersionID,
                      toBytes,
                      fromBytes,
+                     serialVersionID,
+                     dependencies,
                      serialize,
                      deserialize,
                      SerializableByShow,
@@ -78,13 +80,18 @@ class Typeable a => Serializable a where
  fromBytes :: ByteString -> a
  serialVersionID :: a -> VersionID
  serialVersionID _ = ProgramUniqueVID
+ dependencies :: a -> [VersionID]
+ dependencies _ = []
  
-serialize :: (Serializable a) => a -> Serialized
-serialize x = Serialized {dataType = typeID x, serializerVersion = serialVersionID x, dataPacket = toBytes x}
+completeID :: Serializable a => a -> VersionID
+completeID x = combineVIDs $ serialVersionID x : dependencies x
+ 
+serialize :: Serializable a => a -> Serialized
+serialize x = Serialized {dataType = typeID x, serializerVersion = completeID x, dataPacket = toBytes x}
 
-deserialize :: (Serializable a) => Serialized -> Maybe a
+deserialize :: Serializable a => Serialized -> Maybe a
 deserialize (Serialized tid sv dp) | tid /= typeID result = Nothing
-                                   | sv /= serialVersionID result = error "Version of serializer used for this object does not match the current one."
+                                   | sv /= completeID result = error "Version of serializer used for this object does not match the current one."
                                    | otherwise = Just result
  where result = fromBytes dp
 
@@ -185,6 +192,7 @@ instance Serializable ByteString where
  
 instance Serializable a => Serializable [a] where
  serialVersionID _ = VersionID 1
+ dependencies xs = [serialVersionID $ head xs]
  toBytes [] = BS.empty
  toBytes (x:xs) = BS.concat [B.pack $ bytes $ BS.length sx, sx, toBytes xs]
   where sx = toBytes x
@@ -200,6 +208,7 @@ instance Serializable String where
                               
 instance Serializable a => Serializable (Maybe a) where
  serialVersionID _ = VersionID 1
+ dependencies m = [serialVersionID $ fromJust m]
  toBytes Nothing  = BS.empty
  toBytes (Just x) = B.cons 0 $ toBytes x
  fromBytes str | BS.null str = Nothing
@@ -212,11 +221,17 @@ instance Serializable () where
                
 instance (Serializable a, Serializable b) => Serializable (a,b) where
  serialVersionID _ = VersionID 1
+ dependencies t = [serialVersionID $ fst t, serialVersionID $ snd t]
  toBytes (a,b) = toBytes [Left a, Right b]
  fromBytes str = let [Left a, Right b] = fromBytes str in (a,b)
  
 instance (Serializable a, Serializable b) => Serializable (Either a b) where
  serialVersionID _ = VersionID 1
+ dependencies e = [serialVersionID $ lefttype e, serialVersionID $ righttype e]
+  where lefttype  :: Either a b -> a
+        righttype :: Either a b -> b
+        lefttype = undefined
+        righttype = undefined
  toBytes (Left  x) = B.cons 0 $ toBytes x
  toBytes (Right x) = B.cons 1 $ toBytes x
  fromBytes str | B.head str == 0 = Left  $ fromBytes $ B.tail str
@@ -234,6 +249,7 @@ instance Serializable Int where
  
 instance (IArray ar e, Typeable2 ar, Ix i, Serializable i, Serializable e) => Serializable (ar i e) where
  serialVersionID _ = VersionID 1
+ dependencies ar = [serialVersionID $ head $ indices ar, serialVersionID $ head $ elems ar]
  toBytes ar   = toBytes (bounds ar, elems ar)
  fromBytes ar = listArray bnds els
   where (bnds, els) = fromBytes ar
