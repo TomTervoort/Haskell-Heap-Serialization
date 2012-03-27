@@ -3,6 +3,7 @@ module Serializable (
                      Serialized,
                      Serializable,
                      VersionID,
+                     versionID,
                      toBytes,
                      fromBytes,
                      serialVersionID,
@@ -48,15 +49,19 @@ import Data.Array.IArray
 
 -----------------
 
+-- | Type definition that is useful to distinguish lazy from regular ByteStrings.
 type LazyByteString = BL.ByteString
  
 -----------------
 
 type TypeID = String
 
+-- Returns a unique identifier for the type of a Typeable value.
+-- TODO: More reliable method, although that will probably require compiler support.
 typeID :: Typeable a => a -> TypeID
 typeID = show . typeOf
 
+-- Current version of the serialization library.
 libraryVersion :: String
 libraryVersion = "serihask001"
 
@@ -65,6 +70,9 @@ libraryVersion = "serihask001"
 data VersionID = VersionID Word64
                | ProgramUniqueVID 
                 deriving (Eq, Show)
+
+versionID :: (Integral a) => a -> VersionID
+versionID = VersionID . fromIntegral
                
 -- TODO: Better method (e.g. hashing) than xorring
 combineVIDs :: [VersionID] -> VersionID

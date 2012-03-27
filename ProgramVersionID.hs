@@ -1,4 +1,9 @@
 {-# LANGUAGE CPP, ForeignFunctionInterface #-}
+{- | A module that can be used to uniquely identify the build of the executable it is included in.
+     It does this by creating a checksum of the program binary.
+     
+     The module currently only works with GHC under Linux or Windows.
+-} 
 module ProgramVersionID (programVersionID) where 
 
 import Data.List
@@ -26,30 +31,35 @@ type LazyByteString = BSL.ByteString
 #error Currently only GHC is supported.
 #endif
 
--- TODO: Use (MD5) hash instead?
+-- TODO: Use better checksumming method than addition
 checksum :: (Integral a, Integral b) => [a] -> b
 checksum = foldl' (+) 0 . map fromIntegral
 
+-- Used to memoize the program binary checksum.
 cachedPid :: IORef (Maybe Word64)
 {-# NOINLINE cachedPid #-}
 cachedPid = unsafePerformIO $ newIORef Nothing
 
+-- Determines the path of the current executable. TODO: support more platforms.
 executablePath :: IO String
 #ifdef linux_HOST_OS
 executablePath = return "/proc/self/exe"
-#elif defined(mingw_HOST_OS)
+#elif defined(mingw32_HOST_OS) | defined(mingw64_HOST_OS)
+--TODO: test
 foreign import ccall "windows.h GetModuleFileName" windows_moduleFilename :: Ptr a -> (Ptr CChar) -> CUInt -> IO CUInt
 executablePath = allocaArray 1000 
                   $ \buffer -> do len <- windows_moduleFilename nullPtr buffer 1000
                                   when (len == 1000) $ error "Error while trying to retrieve the executable filename."
                                   peekArray (fromIntegral len) buffer >>= return . map castCCharToChar
+#else
+#error OS not supported.
 #endif
 
--- TODO: Portable version
+-- | Calculates a 64-bit integer extremely likely to uniquely identify this build of the binary
+--   that utilizes this module. The result is cached so only the first call is somewhat expensive.
 programVersionID :: IO Word64
---programVersionID = return 424242424242424242
 programVersionID = do cached <- readIORef cachedPid
-                      case cached of 
+                      case cached of
                        Nothing  -> do exe <- executablePath >>= BSL.readFile
                                       let csum = checksum $ BSL.unpack exe
                                       writeIORef cachedPid $ Just csum
