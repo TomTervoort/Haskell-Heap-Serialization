@@ -89,6 +89,7 @@ class Typeable a => Serializable a where
  serialVersionID _ = ProgramUniqueVID
  dependencies :: a -> [VersionID]
  dependencies _ = []
+ -- TODO: Something like toByteString to prevent unnessesary conversions?
  
 completeID :: Serializable a => a -> VersionID
 completeID x = combineVIDs $ serialVersionID x : dependencies x
