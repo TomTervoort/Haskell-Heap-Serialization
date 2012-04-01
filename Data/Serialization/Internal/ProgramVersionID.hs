@@ -4,7 +4,7 @@
      
      The module currently only works with GHC under Linux or Windows.
 -} 
-module ProgramVersionID (checksum, programVersionID) where 
+module Data.Serialization.Internal.ProgramVersionID (checksum, programVersionID) where 
 
 import Data.List
 import System.IO

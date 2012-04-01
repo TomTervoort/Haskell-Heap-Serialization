@@ -1,9 +1,10 @@
 {- | This module offers basic functionality for converting fixed-size integers to lists of bytes 
      and vice-versa. -}
-module IntegralBytes (
-                      bytes,
-                      unbytes
-                     ) where
+module Data.Serialization.Internal.IntegralBytes 
+    (
+      bytes,
+      unbytes
+    ) where
 
 import Data.List
 import System.IO

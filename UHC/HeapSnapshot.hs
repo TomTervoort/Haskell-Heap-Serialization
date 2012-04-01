@@ -1,6 +1,5 @@
-module HeapSnapshot where
-
-import Serializable
+{-# LANGUAGE DeriveDataTypeable #-}
+module UHC.HeapSnapshot where
 
 import Data.List
 import System.IO
@@ -8,6 +7,7 @@ import Control.Monad
 import Data.List
 import Data.Maybe
 import Data.Char
+import Data.Typeable
 
 import Data.Word
 import Data.IntMap (IntMap)
@@ -18,6 +18,7 @@ import Data.Array.Unboxed
 type TODO = ()
 
 newtype HeapSnapshot = HeapSnapshot (UArray Int Word8) -- TODO: Use ByteArray# instead?
+                        deriving Typeable
 
 -- Lazily computed view of a HeapSnapshot that can be used to iterate over a snapshot in Haskell land.
 -- The root of the snapshot can be found at position 0 in the IntMap.
@@ -50,8 +51,11 @@ data HNodeInfo = HNodeInfo TODO
 
 ------------------------------------------
 
-snapshot :: a -> HeapSnapshot
+snapshot :: a -> IO HeapSnapshot
 snapshot = undefined
+
+unsafeRestoreSnapshot :: HeapSnapshot -> IO a
+unsafeRestoreSnapshot = undefined
 
 exploreSnapshot :: HeapSnapshot -> SnapshotView
 exploreSnapshot = undefined

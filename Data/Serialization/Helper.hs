@@ -1,8 +1,8 @@
 {-# LANGUAGE FlexibleInstances, UndecidableInstances #-}
-module SerializableHelper where
+module Data.Serialization.Helper where
 
-import IntegralBytes
-import Serializable
+import Data.Serialization.Internal.IntegralBytes
+import Data.Serialization
 
 import Data.Char
 import Data.ByteString (ByteString)

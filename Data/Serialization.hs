@@ -1,27 +1,28 @@
 {-# LANGUAGE FlexibleInstances, DeriveDataTypeable, TypeSynonymInstances, OverlappingInstances #-}
-module Serializable (
-                     Serialized,
-                     Serializable,
-                     VersionID (..),
-                     toBytes,
-                     fromBytes,
-                     serialVersionID,
-                     dependencies,
-                     serialize,
-                     deserialize,
-                     LazyByteString,
-                     storeInByteString,
-                     loadFromBytes,
-                     hStore,
-                     hLoad,
-                     hLoads,
-                     store,
-                     load,
-                     loads
-                    ) where
+module Data.Serialization 
+    (
+      Serialized,
+      Serializable,
+      VersionID (..),
+      toBytes,
+      fromBytes,
+      serialVersionID,
+      dependencies,
+      serialize,
+      deserialize,
+      LazyByteString,
+      storeInByteString,
+      loadFromBytes,
+      hStore,
+      hLoad,
+      hLoads,
+      store,
+      load,
+      loads
+    ) where
 
-import IntegralBytes
-import ProgramVersionID
+import Data.Serialization.Internal.IntegralBytes
+import Data.Serialization.Internal.ProgramVersionID
 
 import Data.List
 import System.IO
@@ -255,6 +256,11 @@ instance (IArray ar e, Typeable2 ar, Ix i, Serializable i, Serializable e) => Se
  toBytes ar   = toBytes (bounds ar, elems ar)
  fromBytes ar = listArray bnds els
   where (bnds, els) = fromBytes ar
+  
+instance Serializable Byte where
+ serialVersionID _ = VersionID 1
+ toBytes b = [b]
+ fromBytes [b] = b
   
 
 -- TODO: Integer, Float, Text, Double etc.
