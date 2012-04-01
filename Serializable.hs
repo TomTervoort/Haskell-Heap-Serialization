@@ -62,6 +62,9 @@ typeID = show . typeOf
 libraryVersion :: String
 libraryVersion = "serihask001"
 
+-- | A Byte is a Word8.
+type Byte = Word8
+
 -----------------
 
 data VersionID = VersionID Int
@@ -80,8 +83,8 @@ data Serialized = Serialized {dataType :: TypeID, serializerVersion :: VersionID
 -----------------
 
 class Typeable a => Serializable a where
- toBytes   :: a -> ByteString
- fromBytes :: ByteString -> a
+ toBytes   :: a -> [Byte]
+ fromBytes :: [Byte] -> a
  serialVersionID :: a -> VersionID
  serialVersionID _ = ProgramUniqueVID
  dependencies :: a -> [VersionID]
@@ -91,13 +94,13 @@ completeID :: Serializable a => a -> VersionID
 completeID x = combineVIDs $ serialVersionID x : dependencies x
  
 serialize :: Serializable a => a -> Serialized
-serialize x = Serialized {dataType = typeID x, serializerVersion = completeID x, dataPacket = toBytes x}
+serialize x = Serialized {dataType = typeID x, serializerVersion = completeID x, dataPacket = B.pack $ toBytes x}
 
 deserialize :: Serializable a => Serialized -> Maybe a
 deserialize (Serialized tid sv dp) | tid /= typeID result = Nothing
                                    | sv /= completeID result = error "Version of serializer used for this object does not match the current one."
                                    | otherwise = Just result
- where result = fromBytes dp
+ where result = fromBytes $ B.unpack dp
 
 -----------------
 
@@ -180,36 +183,36 @@ loads path = withBinaryFile path ReadMode hLoads
 
 instance Serializable ByteString where
  serialVersionID _ = VersionID 1
- toBytes = id
- fromBytes = id
+ toBytes = B.unpack
+ fromBytes = B.pack
  
 instance Serializable a => Serializable [a] where
  serialVersionID _ = VersionID 1
  dependencies xs = [serialVersionID $ head xs]
- toBytes [] = BS.empty
- toBytes (x:xs) = BS.concat [B.pack $ bytes $ BS.length sx, sx, toBytes xs]
+ toBytes [] = []
+ toBytes (x:xs) = concat [bytes $ length sx, sx, toBytes xs]
   where sx = toBytes x
- fromBytes str | BS.null str = []
-               | otherwise = let (len, str1)  = BS.splitAt 4 str
-                                 (str2, rest) = BS.splitAt (unbytes $ B.unpack len) str1
-                              in fromBytes str2 : fromBytes rest     
+ fromBytes []  = []
+ fromBytes str = let (len, str1)  = splitAt 4 str
+                     (str2, rest) = splitAt (unbytes len) str1
+                  in fromBytes str2 : fromBytes rest     
                               
 instance Serializable String where
  serialVersionID _ = VersionID 1
- toBytes = encodeUtf8 . T.pack
- fromBytes = T.unpack . decodeUtf8
+ toBytes = B.unpack . encodeUtf8 . T.pack
+ fromBytes = T.unpack . decodeUtf8 . B.pack
                               
 instance Serializable a => Serializable (Maybe a) where
  serialVersionID _ = VersionID 1
  dependencies m = [serialVersionID $ fromJust m]
- toBytes Nothing  = BS.empty
- toBytes (Just x) = B.cons 0 $ toBytes x
- fromBytes str | BS.null str = Nothing
-               | otherwise   = Just $ fromBytes $ B.tail str
+ toBytes Nothing  = []
+ toBytes (Just x) = 0 : toBytes x
+ fromBytes [] = Nothing
+ fromBytes (_:xs) = Just $ fromBytes xs
                
 instance Serializable () where
  serialVersionID _ = VersionID 1
- toBytes   _ = B.empty
+ toBytes   _ = []
  fromBytes _ = ()
                
 instance (Serializable a, Serializable b) => Serializable (a,b) where
@@ -225,10 +228,10 @@ instance (Serializable a, Serializable b) => Serializable (Either a b) where
         righttype :: Either a b -> b
         lefttype = undefined
         righttype = undefined
- toBytes (Left  x) = B.cons 0 $ toBytes x
- toBytes (Right x) = B.cons 1 $ toBytes x
- fromBytes str | B.head str == 0 = Left  $ fromBytes $ B.tail str
-               | otherwise       = Right $ fromBytes $ B.tail str
+ toBytes (Left  x) = 0 : toBytes x
+ toBytes (Right x) = 1 : toBytes x
+ fromBytes (0:xs) = Left  $ fromBytes xs
+ fromBytes (1:xs) = Right $ fromBytes xs
                
 instance Serializable Char where
  serialVersionID _ = VersionID 1
@@ -237,8 +240,13 @@ instance Serializable Char where
  
 instance Serializable Int where
  serialVersionID _ = VersionID 1
- toBytes = B.pack . bytes
- fromBytes = unbytes . B.unpack
+ toBytes = bytes
+ fromBytes = unbytes
+ 
+instance Serializable Word where
+ serialVersionID _ = VersionID 1
+ toBytes = bytes
+ fromBytes = unbytes
  
 instance (IArray ar e, Typeable2 ar, Ix i, Serializable i, Serializable e) => Serializable (ar i e) where
  serialVersionID _ = VersionID 1
@@ -248,4 +256,4 @@ instance (IArray ar e, Typeable2 ar, Ix i, Serializable i, Serializable e) => Se
   where (bnds, els) = fromBytes ar
   
 
--- TODO: Integer, Float, Text, Double, Word etc.
+-- TODO: Integer, Float, Text, Double etc.

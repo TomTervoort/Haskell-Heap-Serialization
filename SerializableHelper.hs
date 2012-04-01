@@ -17,8 +17,8 @@ class (Show a, Read a, Typeable a) => SerializableByShow a where
 
 instance SerializableByShow a => Serializable a where
  serialVersionID = showVersionID
- toBytes   = B.pack . concat . map (bytes . ord) . show
- fromBytes = read . stringify . B.unpack
+ toBytes   = concat . map (bytes . ord) . show
+ fromBytes = read . stringify
   where stringify [] = ""
         stringify (a:b:c:d:xs) = chr (unbytes [a,b,c,d]) : stringify xs
   
@@ -27,6 +27,5 @@ instance SerializableByShow a => Serializable a where
 instance SerializableByShow Integer
 instance SerializableByShow Float
 instance SerializableByShow Double
-instance SerializableByShow Word
 instance (Read a, Typeable a, Integral a) => SerializableByShow (Ratio a)
 
