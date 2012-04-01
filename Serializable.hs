@@ -3,7 +3,6 @@ module Serializable (
                      Serialized,
                      Serializable,
                      VersionID,
-                     versionID,
                      toBytes,
                      fromBytes,
                      serialVersionID,
@@ -67,17 +66,16 @@ libraryVersion = "serihask001"
 
 -----------------
 
-data VersionID = VersionID Word64
+data VersionID = VersionID Int
                | ProgramUniqueVID 
                 deriving (Eq, Show)
-
-versionID :: (Integral a) => a -> VersionID
-versionID = VersionID . fromIntegral
                
--- TODO: Better method (e.g. hashing) than xorring
 combineVIDs :: [VersionID] -> VersionID
 combineVIDs vids | ProgramUniqueVID `elem` vids = ProgramUniqueVID
-                 | otherwise =  VersionID $ foldl' xor 0 $ map (\(VersionID i) -> i) vids
+                 | otherwise =  VersionID $ toInt $ checksum $ concatMap bytes 
+                                          $ map (\(VersionID i) -> i) vids
+ where toInt :: Word64 -> Int
+       toInt x = fromIntegral $ (x `shiftR` 32) `xor` x
 
 data Serialized = Serialized {dataType :: TypeID, serializerVersion :: VersionID, dataPacket :: ByteString} deriving Show
 
