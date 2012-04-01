@@ -8,6 +8,8 @@ module Data.Serialization
       fromBytes,
       serialVersionID,
       dependencies,
+      listToBytes,
+      listFromBytes,
       serialize,
       deserialize,
       LazyByteString,
@@ -90,6 +92,16 @@ class Typeable a => Serializable a where
  serialVersionID _ = ProgramUniqueVID
  dependencies :: a -> [VersionID]
  dependencies _ = []
+ listToBytes :: [a] -> [Byte]
+ listToBytes [] = []
+ listToBytes (x:xs) = concat [bytes $ length bx, bx, listToBytes xs]
+  where bx = toBytes x
+ listFromBytes :: [Byte] -> [a]
+ listFromBytes []  = []
+ listFromBytes str = let (len, str1)  = splitAt 4 str
+                         (str2, rest) = splitAt (unbytes len) str1
+                      in fromBytes str2 : listFromBytes rest
+ 
  -- TODO: Something like toByteString to prevent unnessesary conversions?
  
 completeID :: Serializable a => a -> VersionID
@@ -179,9 +191,7 @@ loads :: FilePath -> IO [Serialized]
 loads path = withBinaryFile path ReadMode hLoads
 
 
------------------
-        
------------------
+----------------------
 
 instance Serializable ByteString where
  serialVersionID _ = VersionID 1
@@ -191,18 +201,8 @@ instance Serializable ByteString where
 instance Serializable a => Serializable [a] where
  serialVersionID _ = VersionID 1
  dependencies xs = [serialVersionID $ head xs]
- toBytes [] = []
- toBytes (x:xs) = concat [bytes $ length sx, sx, toBytes xs]
-  where sx = toBytes x
- fromBytes []  = []
- fromBytes str = let (len, str1)  = splitAt 4 str
-                     (str2, rest) = splitAt (unbytes len) str1
-                  in fromBytes str2 : fromBytes rest     
-                              
-instance Serializable String where
- serialVersionID _ = VersionID 1
- toBytes = B.unpack . encodeUtf8 . T.pack
- fromBytes = T.unpack . decodeUtf8 . B.pack
+ toBytes = listToBytes
+ fromBytes = listFromBytes
                               
 instance Serializable a => Serializable (Maybe a) where
  serialVersionID _ = VersionID 1
@@ -239,6 +239,9 @@ instance Serializable Char where
  serialVersionID _ = VersionID 1
  toBytes = toBytes . ord
  fromBytes = chr . fromBytes
+ -- Specialization for Strings, encode as UTF-8:
+ listToBytes = B.unpack . encodeUtf8 . T.pack
+ listFromBytes = T.unpack . decodeUtf8 . B.pack
  
 instance Serializable Int where
  serialVersionID _ = VersionID 1
@@ -261,6 +264,8 @@ instance Serializable Byte where
  serialVersionID _ = VersionID 1
  toBytes b = [b]
  fromBytes [b] = b
+ listToBytes = id
+ listFromBytes = id
   
 
 -- TODO: Integer, Float, Text, Double etc.
