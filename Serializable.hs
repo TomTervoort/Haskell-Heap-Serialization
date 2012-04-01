@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleInstances, UndecidableInstances, DeriveDataTypeable, TypeSynonymInstances, OverlappingInstances #-}
+{-# LANGUAGE FlexibleInstances, DeriveDataTypeable, TypeSynonymInstances, OverlappingInstances #-}
 module Serializable (
                      Serialized,
                      Serializable,
@@ -9,7 +9,6 @@ module Serializable (
                      dependencies,
                      serialize,
                      deserialize,
-                     SerializableByShow,
                      LazyByteString,
                      storeInByteString,
                      loadFromBytes,
@@ -40,7 +39,6 @@ import Data.Word
 import Data.Bits
 import Data.Typeable
 
-import Data.Ratio
 import System.Environment
 import qualified Data.Text as T
 import Data.Text.Encoding
@@ -177,17 +175,6 @@ loads path = withBinaryFile path ReadMode hLoads
 
 
 -----------------
-
-class (Show a, Read a, Typeable a) => SerializableByShow a where
- showVersionID :: a -> VersionID
- showVersionID _ = VersionID 0
-
-instance SerializableByShow a => Serializable a where
- serialVersionID = showVersionID
- toBytes   = B.pack . concat . map (bytes . ord) . show
- fromBytes = read . stringify . B.unpack
-  where stringify [] = ""
-        stringify (a:b:c:d:xs) = chr (unbytes [a,b,c,d]) : stringify xs
         
 -----------------
 
@@ -261,12 +248,4 @@ instance (IArray ar e, Typeable2 ar, Ix i, Serializable i, Serializable e) => Se
   where (bnds, els) = fromBytes ar
   
 
--- The following instances use SerializableByShow for now, but should get more compact representations
-instance SerializableByShow Integer
-instance SerializableByShow Float
-instance SerializableByShow Double
-instance SerializableByShow Word
-instance (Read a, Typeable a, Integral a) => SerializableByShow (Ratio a)
-
-
-
+-- TODO: Integer, Float, Text, Double, Word etc.
