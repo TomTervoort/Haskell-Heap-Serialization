@@ -108,7 +108,7 @@ storeInByteString :: Serialized -> IO LazyByteString
 storeInByteString obj = do pid <- programVersionID
                            -- Prepend version identifier with 0 if manual or 1 if generated
                            let vid = B.pack $ case serializerVersion obj of
-                                               VersionID id -> 0 : bytes id
+                                               VersionID id -> 0 : bytes (fromIntegral id :: Word64)
                                                ProgramUniqueVID -> 1 : bytes pid
                            let tid = BS.pack $ dataType obj ++ "\0"
                            let pdata = dataPacket obj
