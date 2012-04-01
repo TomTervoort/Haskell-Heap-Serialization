@@ -4,7 +4,7 @@
      
      The module currently only works with GHC under Linux or Windows.
 -} 
-module ProgramVersionID (programVersionID) where 
+module ProgramVersionID (checksum, programVersionID) where 
 
 import Data.List
 import System.IO
@@ -13,6 +13,7 @@ import Data.List
 import Data.Maybe
 import Data.Char
 
+import Data.Bits
 import Data.Word
 import Data.IORef
 import System.IO.Unsafe
@@ -31,9 +32,14 @@ type LazyByteString = BSL.ByteString
 #error Currently only GHC is supported.
 #endif
 
--- TODO: Use better checksumming method than addition
-checksum :: (Integral a, Integral b) => [a] -> b
-checksum = foldl' (+) 0 . map fromIntegral
+-- | Computes a checksum using Fletcher's algorithm.
+checksum :: [Word8] -> Word64
+checksum = fletcher 0 0 . map fromIntegral
+ where fletcher :: Word32 -> Word32 -> [Word32] -> Word64
+       fletcher s1 s2 []     = fromIntegral s1 `shiftL` 32 .|. fromIntegral s2
+       fletcher s1 s2 (x:xs) = let a = s1 + x
+                                   b = s2 + a
+                                in s1 `seq` s2 `seq` fletcher a b xs
 
 -- Used to memoize the program binary checksum.
 cachedPid :: IORef (Maybe Word64)
@@ -56,7 +62,7 @@ executablePath = allocaArray 1000
 #endif
 
 -- | Calculates a 64-bit integer extremely likely to uniquely identify this build of the binary
---   that utilizes this module. The result is cached so only the first call is somewhat expensive.
+-- | that utilizes this module. The result is cached so only the first call is somewhat expensive.
 programVersionID :: IO Word64
 programVersionID = do cached <- readIORef cachedPid
                       case cached of
