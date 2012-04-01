@@ -2,7 +2,7 @@
 module Serializable (
                      Serialized,
                      Serializable,
-                     VersionID,
+                     VersionID (..),
                      versionID,
                      toBytes,
                      fromBytes,
