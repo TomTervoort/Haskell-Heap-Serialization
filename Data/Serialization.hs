@@ -4,10 +4,12 @@ module Data.Serialization
       Serialized,
       Serializable,
       VersionID (..),
+      Byte,
       toBytes,
       fromBytes,
       serialVersionID,
       dependencies,
+      constBytesSize,
       listToBytes,
       listFromBytes,
       serialize,
@@ -57,9 +59,8 @@ type LazyByteString = BL.ByteString
 type TypeID = String
 
 -- Returns a unique identifier for the type of a Typeable value.
--- TODO: More reliable method, although that will probably require compiler support.
 typeID :: Typeable a => a -> TypeID
-typeID = show . typeOf
+typeID = show . typeOf -- TODO: dataTypeName . dataTypeOf
 
 -- Current version of the serialization library.
 libraryVersion :: String
