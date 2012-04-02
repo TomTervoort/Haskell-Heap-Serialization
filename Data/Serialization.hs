@@ -70,10 +70,12 @@ type Byte = Word8
 
 -----------------
 
+-- | A datatype containing a version of a serialization method. ProgramUniqueVID indicates only 
+-- | serialized objects of the same build of the same program are compatible.
 data VersionID = VersionID Int
                | ProgramUniqueVID 
                 deriving (Eq, Show)
-               
+                              
 combineVIDs :: [VersionID] -> VersionID
 combineVIDs vids | ProgramUniqueVID `elem` vids = ProgramUniqueVID
                  | otherwise =  VersionID $ toInt $ checksum $ concatMap bytes 
@@ -88,19 +90,32 @@ data Serialized = Serialized {dataType :: TypeID, serializerVersion :: VersionID
 class Typeable a => Serializable a where
  toBytes   :: a -> [Byte]
  fromBytes :: [Byte] -> a
+ 
  serialVersionID :: a -> VersionID
  serialVersionID _ = ProgramUniqueVID
  dependencies :: a -> [VersionID]
  dependencies _ = []
+ 
+ constBytesSize :: a -> Maybe Int
+ constBytesSize _ = Nothing
+ 
  listToBytes :: [a] -> [Byte]
- listToBytes [] = []
- listToBytes (x:xs) = concat [bytes $ length bx, bx, listToBytes xs]
-  where bx = toBytes x
+ listToBytes l | isJust $ constBytesSize $ head l = concatMap toBytes l
+               | otherwise = listToBytes' l
+  where listToBytes' [] = []
+        listToBytes' (x:xs) = let bx = toBytes x in concat [bytes $ length bx, bx, listToBytes' xs]
  listFromBytes :: [Byte] -> [a]
- listFromBytes []  = []
- listFromBytes str = let (len, str1)  = splitAt 4 str
-                         (str2, rest) = splitAt (unbytes len) str1
-                      in fromBytes str2 : listFromBytes rest
+ listFromBytes l = case constBytesSize $ head defaultresult of
+                    Nothing -> defaultresult
+                    Just n  -> chunks n l
+  where defaultresult = listFromBytes' l
+        chunks _ [] = []
+        chunks n xs = case splitAt n xs of
+                       (c, rest) -> fromBytes c : chunks n rest
+        listFromBytes' []  = []
+        listFromBytes' str = let (len, str1)  = splitAt 4 str
+                                 (str2, rest) = splitAt (unbytes len) str1
+                              in fromBytes str2 : listFromBytes' rest
  
  -- TODO: Something like toByteString to prevent unnessesary conversions?
  
@@ -216,6 +231,7 @@ instance Serializable () where
  serialVersionID _ = VersionID 1
  toBytes   _ = []
  fromBytes _ = ()
+ constBytesSize _ = Just 0
                
 instance (Serializable a, Serializable b) => Serializable (a,b) where
  serialVersionID _ = VersionID 1
@@ -247,11 +263,13 @@ instance Serializable Int where
  serialVersionID _ = VersionID 1
  toBytes = bytes
  fromBytes = unbytes
+ constBytesSize = Just . (`div` 8) . bitSize
  
 instance Serializable Word where
  serialVersionID _ = VersionID 1
  toBytes = bytes
  fromBytes = unbytes
+ constBytesSize = Just . (`div` 8) . bitSize
  
 instance (IArray ar e, Typeable2 ar, Ix i, Serializable i, Serializable e) => Serializable (ar i e) where
  serialVersionID _ = VersionID 1
