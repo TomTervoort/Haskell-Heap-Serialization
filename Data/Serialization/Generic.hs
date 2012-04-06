@@ -28,4 +28,11 @@ genericToBytes d = case dataTypeRep $ dataTypeOf d of
                     NoRep        -> undefined
  where ctor = toConstr d
  
-
+genericFromBytes :: (Data a) => [Byte] -> a
+genericFromBytes bs = result
+ where result = case dataTypeRep $ dataTypeOf result of
+                      AlgRep ctors -> undefined
+                      IntRep       -> undefined
+                      FloatRep     -> undefined
+                      CharRep      -> undefined
+                      NoRep        -> undefined
