@@ -8,6 +8,7 @@ module Data.Serialization
       toBytes,
       fromBytes,
       serialVersionID,
+      sid,
       dependencies,
       constBytesSize,
       listToBytes,
@@ -120,6 +121,10 @@ class Typeable a => Serializable a where
  
  -- TODO: Something like toByteString to prevent unnessesary conversions?
  
+-- | Shorthand for serialVersionID.
+sid :: Serializable a => a -> VersionID
+sid = serialVersionID 
+
 completeID :: Serializable a => a -> VersionID
 completeID x = combineVIDs $ serialVersionID x : dependencies x
  
@@ -290,6 +295,35 @@ instance Serializable Byte where
  fromBytes [b] = b
  listToBytes = id
  listFromBytes = id
+ constBytesSize _ = Just 1
+ 
+instance Serializable Integer where
+ serialVersionID _ = VersionID 1
+ toBytes 0 = []
+ toBytes i = fromIntegral (i .&. 0xff) : toBytes (i `rotateR` 8)
+ fromBytes = fromBytes' 0 -- FIXME
+  where fromBytes' i []     = i
+        fromBytes' i (x:xs) = fromBytes' (i `rotateL` 8 .|. toInteger x) xs
   
+floatToBytes :: (RealFloat a) => a -> [Byte]
+floatToBytes = toBytes . decodeFloat
+
+floatFromBytes :: (RealFloat a) => [Byte] -> a
+floatFromBytes = uncurry encodeFloat . fromBytes
+
+instance Serializable Double where
+ serialVersionID _ = VersionID 1
+ toBytes = floatToBytes
+ fromBytes = floatFromBytes
+ dependencies _ = let tup = undefined :: (Int,Integer)
+                    in sid tup : dependencies tup
+                    
+instance Serializable Float where
+ serialVersionID _ = VersionID 1
+ toBytes = floatToBytes
+ fromBytes = floatFromBytes
+ dependencies _ = let tup = undefined :: (Int,Integer)
+                    in sid tup : dependencies tup
+
 
 -- TODO: Integer, Float, Double etc.
