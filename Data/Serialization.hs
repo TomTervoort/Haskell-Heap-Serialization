@@ -260,6 +260,11 @@ instance Serializable Char where
  listToBytes = B.unpack . encodeUtf8 . T.pack
  listFromBytes = T.unpack . decodeUtf8 . B.pack
  
+instance Serializable Text where
+ serialVersionID _ = VersionID 1
+ toBytes = B.unpack . encodeUtf8
+ fromBytes = decodeUtf8 . B.unpack
+ 
 instance Serializable Int where
  serialVersionID _ = VersionID 1
  toBytes = bytes
@@ -287,4 +292,4 @@ instance Serializable Byte where
  listFromBytes = id
   
 
--- TODO: Integer, Float, Text, Double etc.
+-- TODO: Integer, Float, Double etc.
