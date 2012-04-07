@@ -46,6 +46,7 @@ import Data.Bits
 import Data.Typeable
 
 import System.Environment
+import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Encoding
 import Data.Array.IArray
@@ -268,7 +269,7 @@ instance Serializable Char where
 instance Serializable Text where
  serialVersionID _ = VersionID 1
  toBytes = B.unpack . encodeUtf8
- fromBytes = decodeUtf8 . B.unpack
+ fromBytes = decodeUtf8 . B.pack
  
 instance Serializable Int where
  serialVersionID _ = VersionID 1
@@ -301,7 +302,7 @@ instance Serializable Integer where
  serialVersionID _ = VersionID 1
  toBytes 0 = []
  toBytes i = fromIntegral (i .&. 0xff) : toBytes (i `rotateR` 8)
- fromBytes = fromBytes' 0 -- FIXME
+ fromBytes = fromBytes' 0 . reverse
   where fromBytes' i []     = i
         fromBytes' i (x:xs) = fromBytes' (i `rotateL` 8 .|. toInteger x) xs
   
@@ -326,4 +327,3 @@ instance Serializable Float where
                     in sid tup : dependencies tup
 
 
--- TODO: Integer, Float, Double etc.
