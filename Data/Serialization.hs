@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleInstances, DeriveDataTypeable, TypeSynonymInstances, OverlappingInstances #-}
+{-# LANGUAGE FlexibleInstances, DeriveDataTypeable, TypeSynonymInstances, OverlappingInstances, RankNTypes #-}
 module Data.Serialization 
     (
       Serialized,
@@ -23,7 +23,9 @@ module Data.Serialization
       hLoads,
       store,
       load,
-      loads
+      loads,
+      
+      Serializable1 (..)
     ) where
 
 import Data.Serialization.Internal.IntegralBytes
@@ -120,8 +122,8 @@ class Typeable a => Serializable a where
                                  (str2, rest) = splitAt (unbytes len) str1
                               in fromBytes str2 : listFromBytes' rest
  
- -- TODO: Something like toByteString to prevent unnessesary conversions?
- 
+------------------------------------------
+
 -- | Shorthand for serialVersionID.
 sid :: Serializable a => a -> VersionID
 sid = serialVersionID 
@@ -219,20 +221,6 @@ instance Serializable ByteString where
  serialVersionID _ = VersionID 1
  toBytes = B.unpack
  fromBytes = B.pack
- 
-instance Serializable a => Serializable [a] where
- serialVersionID _ = VersionID 1
- dependencies xs = [serialVersionID $ head xs]
- toBytes = listToBytes
- fromBytes = listFromBytes
-                              
-instance Serializable a => Serializable (Maybe a) where
- serialVersionID _ = VersionID 1
- dependencies m = [serialVersionID $ fromJust m]
- toBytes Nothing  = []
- toBytes (Just x) = 0 : toBytes x
- fromBytes [] = Nothing
- fromBytes (_:xs) = Just $ fromBytes xs
                
 instance Serializable () where
  serialVersionID _ = VersionID 1
@@ -325,5 +313,46 @@ instance Serializable Float where
  fromBytes = floatFromBytes
  dependencies _ = let tup = undefined :: (Int,Integer)
                     in sid tup : dependencies tup
+                    
+instance Serializable Bool where
+ serialVersionID _ = VersionID 1
+ toBytes False = [0]
+ toBytes True = [maxBound]
+ fromBytes [x] = x /= 0
+ constBytesSize _ = Just 1
 
 
+------------------------------------------------------
+
+class Typeable1 f => Serializable1 f where
+ toBytes1 :: Serializable a => f a -> [Byte]
+ fromBytes1 :: Serializable a => [Byte] -> f a
+ serialVersionID1 :: f a -> VersionID
+ serialVersionID1 _ = ProgramUniqueVID
+ dependencies1 :: Serializable a => f a -> [VersionID]
+ dependencies1 _ = []
+
+instance (Serializable1 f, Serializable a) => Serializable (f a) where
+ toBytes = toBytes1
+ fromBytes = fromBytes1
+ serialVersionID = serialVersionID1
+ dependencies fa = serialVersionID a : dependencies a ++ dependencies1 fa
+  where a = innerType fa
+        innerType = undefined :: f a -> a
+
+------------------------------------------------------
+
+instance Serializable1 [] where
+ serialVersionID1 _ = VersionID 1
+ toBytes1 = listToBytes
+ fromBytes1 = listFromBytes
+ 
+instance Serializable1 Maybe where
+ serialVersionID1 _ = VersionID 1
+ toBytes1 Nothing  = []
+ toBytes1 (Just x) = 0 : toBytes x
+ fromBytes1 [] = Nothing
+ fromBytes1 (_:xs) = Just $ fromBytes xs
+ 
+
+-- TODO: Serializable2
