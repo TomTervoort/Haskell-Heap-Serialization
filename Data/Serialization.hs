@@ -108,7 +108,7 @@ class Typeable a => Serializable a where
  listToBytes l | isJust $ constBytesSize $ head l = concatMap toBytes l
                | otherwise = listToBytes' l
   where listToBytes' [] = []
-        listToBytes' (x:xs) = let bx = toBytes x in concat [bytes $ length bx, bx, listToBytes' xs]
+        listToBytes' (x:xs) = let bx = toBytes x in concat [varbytes $ length bx, bx, listToBytes' xs]
  listFromBytes :: [Byte] -> [a]
  listFromBytes l = case constBytesSize $ head defaultresult of
                     Nothing -> defaultresult
@@ -118,8 +118,8 @@ class Typeable a => Serializable a where
         chunks n xs = case splitAt n xs of
                        (c, rest) -> fromBytes c : chunks n rest
         listFromBytes' []  = []
-        listFromBytes' str = let (len, str1)  = splitAt 4 str
-                                 (str2, rest) = splitAt (unbytes len) str1
+        listFromBytes' str = let (len, str1)  = varunbytes str
+                                 (str2, rest) = splitAt len str1
                               in fromBytes str2 : listFromBytes' rest
  
 ------------------------------------------
@@ -150,7 +150,7 @@ storeInByteString obj = do pid <- programVersionID
                                                ProgramUniqueVID -> 1 : bytes pid
                            let tid = BS.pack $ dataType obj ++ "\0"
                            let pdata = dataPacket obj
-                           let datalen = B.pack $ bytes $ B.length pdata
+                           let datalen = B.pack $ varbytes $ B.length pdata
                            let libid = BS.pack libraryVersion
                            return $ BL.fromChunks
                                      [
@@ -167,8 +167,8 @@ loadFromBytes str = do let str0 = BL.unpack str
                        let (lid, str1) = splitAt (length libraryVersion) str0
                        let (vid, str2) = splitAt 9 str1
                        let (tid, str3) = (takeWhile (/= 0) str2, drop (length tid + 1) str2)
-                       let (len, str4) = splitAt 4 str3
-                       let (dat, str5) = splitAt (unbytes len) str4
+                       let (len, str4) = varunbytes str3
+                       let (dat, str5) = splitAt len str4
                             
                        when (asciiString lid /= libraryVersion) $ error "Object was not serialized with the current version of the library."
                        pvid <- case vid of

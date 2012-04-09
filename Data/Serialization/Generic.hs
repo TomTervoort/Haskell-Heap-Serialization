@@ -32,7 +32,7 @@ genericToBytes set d = case specializedSerializer set d of
                                             AlgRep _     -> fromIntegral (constrIndex $ toConstr d) : concatWithLengths (gmapQ (genericToBytes set) d) 
                                             _ -> undefined
  where concatWithLengths [] = []
-       concatWithLengths (x:xs) = bytes (length x) ++ x ++ concatWithLengths xs
+       concatWithLengths (x:xs) = varbytes (length x) ++ x ++ concatWithLengths xs
 
 
 data Unfolder r = Unfolder [Byte] r              
@@ -51,8 +51,8 @@ genericFromBytes set bs = result
                                                                                   ++ dataTypeName (dataTypeOf result) ++ "."
                                               _ -> undefined
        unfolder :: forall b r. Data b => Unfolder (b -> r) -> Unfolder r
-       unfolder (Unfolder bs f) = let (len, bs')   = splitAt 4 bs
-                                      (curr, rest) = splitAt (unbytes len) bs'
+       unfolder (Unfolder bs f) = let (len, bs')   = varunbytes bs
+                                      (curr, rest) = splitAt len bs'
                                    in Unfolder rest (f $ genericFromBytes set curr)
 
 
