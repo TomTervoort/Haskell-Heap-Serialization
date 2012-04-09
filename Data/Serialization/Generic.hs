@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE DeriveDataTypeable, RankNTypes #-}
 module Data.Serialization.Generic where
 
 import Data.Serialization
@@ -16,7 +16,13 @@ import Data.Typeable
 import Data.Data
 import Data.Generics
 
-data Test = Test Integer Integer deriving (Typeable, Data)
+data Test = Test Integer Integer
+          | Test2 Float Int (Test3 Bool Test)
+          deriving (Typeable, Data, Show)
+          
+data Test3 a b = Blaat a (Either a b) b
+               | Blah
+               deriving (Typeable, Data, Show)
 
 genericToBytes :: (Data a) => SerializationSettings -> a -> [Byte]
 genericToBytes set d = case specializedSerializer set d of
@@ -27,7 +33,9 @@ genericToBytes set d = case specializedSerializer set d of
                                             _ -> undefined
  where concatWithLengths [] = []
        concatWithLengths (x:xs) = bytes (length x) ++ x ++ concatWithLengths xs
-                                
+
+
+data Unfolder r = Unfolder [Byte] r              
  
 genericFromBytes :: (Data a) => SerializationSettings -> [Byte] -> a
 genericFromBytes set bs = result
@@ -36,8 +44,16 @@ genericFromBytes set bs = result
                         NoSerializer      -> case dataTypeRep $ dataTypeOf result of
                                               AlgRep ctors -> let (i:xs) = bs
                                                                   ctor = ctors !! (fromIntegral i - 1)
-                                                               in undefined --TODO
+                                                                  (Unfolder left x) = gunfold unfolder (Unfolder xs) ctor
+                                                               in if null left
+                                                                   then x 
+                                                                   else error $ "Not all bytes are consumed when deserializing as "
+                                                                                  ++ dataTypeName (dataTypeOf result) ++ "."
                                               _ -> undefined
+       unfolder :: forall b r. Data b => Unfolder (b -> r) -> Unfolder r
+       unfolder (Unfolder bs f) = let (len, bs')   = splitAt 4 bs
+                                      (curr, rest) = splitAt (unbytes len) bs'
+                                   in Unfolder rest (f $ genericFromBytes set curr)
 
 
 specializedSerializer :: (Data a) => SerializationSettings -> a -> Serializer a
@@ -45,3 +61,8 @@ specializedSerializer set x = findMatch $ map (\(SWrapper f) -> f x) $ specializ
  where findMatch [] = NoSerializer
        findMatch (s@(Serializer _ _):_) = s
        findMatch (_:xs) = findMatch xs
+       
+       
+       
+genericTest :: (Data a) => a -> a
+genericTest = genericFromBytes defaultSettings . genericToBytes defaultSettings

@@ -27,16 +27,17 @@ import Data.Array.ST (STArray)
 
 data Serializer a = Serializer (a -> [Byte]) ([Byte] -> a)
                   | NoSerializer
+                  --TODO: | RecursiveSerializer ([SWrapper] -> Serializer a)
                   deriving (Typeable, Data)
 
 
 data SWrapper = SWrapper (Generic Serializer)
 
 data SerializationSettings = SerializationSettings {
-                               specializedInstances :: [SWrapper]
+                               specializedInstances :: [SWrapper] -- TODO: Map TypeRep SWrapper
                                -- TODO ...
                              }
-                                                        
+
 assertType :: a -> a -> a
 assertType _ x = x
 
@@ -49,7 +50,7 @@ sWrapper x = SWrapper getSerializer
        getSerializer y = if typeOf y == typeOf x
                           then Serializer (toBytes . assertType x . fromJust . cast) (fromJust . cast . assertType x . fromBytes)
                           else NoSerializer 
-
+                          
 standardSpecializations :: [SWrapper]
 standardSpecializations = [
                              sWrapper (u :: Int),
@@ -72,6 +73,8 @@ standardSpecializations = [
                              sWrapper3 (u :: (Serializable i, Serializable a) => STArray s i a)--}
                           ]
  where u = undefined
+ 
+
 
 defaultSettings :: SerializationSettings
 defaultSettings = SerializationSettings {
