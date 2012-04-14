@@ -11,6 +11,7 @@ import Data.Serialization hiding (serialize, deserialize)
 import Data.Serialization.Settings
 import Data.Serialization.Internal
 import Data.Serialization.Internal.IntegralBytes 
+import Data.Serialization.Internal.ProgramVersionID
 
 import Data.List
 import System.IO
@@ -18,9 +19,14 @@ import Control.Monad
 import Data.List
 import Data.Maybe
 import Data.Char
+import Data.Bits
 
 import Data.Map (Map)
 import qualified Data.Map as M
+
+import Data.Hashable
+import Data.HashSet (Set)
+import qualified Data.HashSet as S
 
 import Data.Typeable
 import Data.Data
@@ -29,6 +35,10 @@ import Data.Generics
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
 
+import Debug.Trace
+
+----
+
 data Test = Test Integer Integer
           | Test2 Float Int (Test3 Bool Test)
           deriving (Typeable, Data, Show)
@@ -36,14 +46,15 @@ data Test = Test Integer Integer
 data Test3 a b = Blaat a (Either a b) b
                | Blah
                deriving (Typeable, Data, Show)
+               
+-----
 
 genericToBytes :: (Data a) => SerializationSettings -> a -> [Byte]
 genericToBytes set d = case specializedSerializer set d of
                         Serializer to _ -> to d
                         NoSerializer    -> case dataTypeRep $ dataTypeOf d of
-                                            -- TODO: Can it be safely assumed that a datatype has less than 256 alternatives?
-                                            AlgRep _     -> fromIntegral (constrIndex $ toConstr d) : concatWithLengths (gmapQ (genericToBytes set) d) 
-                                            _ -> undefined
+                                            AlgRep _     -> varbytes (constrIndex $ toConstr d) ++ concatWithLengths (gmapQ (genericToBytes set) d) 
+                                            _ -> error $ "A specialized serializer is required for type " ++ dataTypeName (dataTypeOf d)
  where concatWithLengths [] = []
        concatWithLengths (x:xs) = varbytes (length x) ++ x ++ concatWithLengths xs
 
@@ -55,14 +66,14 @@ genericFromBytes set bs = result
  where result = case specializedSerializer set result of
                         Serializer _ from -> from bs
                         NoSerializer      -> case dataTypeRep $ dataTypeOf result of
-                                              AlgRep ctors -> let (i:xs) = bs
-                                                                  ctor = ctors !! (fromIntegral i - 1)
+                                              AlgRep ctors -> let (i,xs) = varunbytes bs
+                                                                  ctor = ctors !! (i - 1)
                                                                   (Unfolder left x) = gunfold unfolder (Unfolder xs) ctor
                                                                in if null left
                                                                    then x 
                                                                    else error $ "Not all bytes are consumed when deserializing as "
                                                                                   ++ dataTypeName (dataTypeOf result) ++ "."
-                                              _ -> undefined
+                                              _ -> undefined -- Should not occur if versions match.
        unfolder :: Data b => Unfolder (b -> r) -> Unfolder r
        unfolder (Unfolder bs f) = let (len, bs')   = varunbytes bs
                                       (curr, rest) = splitAt len bs'
@@ -72,9 +83,26 @@ genericFromBytes set bs = result
 genericTest :: (Data a) => a -> a
 genericTest = genericFromBytes defaultSettings . genericToBytes defaultSettings
 
---TODO
 genericVersionID :: (Data a) => SerializationSettings -> a -> VersionID
-genericVersionID _ _ = ProgramUniqueVID
+genericVersionID set x = combineVIDs $ [settingsVID set, structureID S.empty $ dataTypeOf x] 
+-- Take checksum over characters in data type name and constructor kinds.
+ where structureID :: Set String -> DataType -> VersionID
+       structureID set d | S.member (dataTypeName d) set  = VersionID 0
+                         | otherwise = let newset = S.insert (dataTypeName d) set
+                                        in VersionID . checksumInt
+                                            $  concatMap (bytes . ord) (dataTypeName d)
+                                            ++ 0 : case dataTypeRep d of
+                                                    AlgRep ctors -> 0 : concatMap (ctorID newset) ctors
+                                                    IntRep       -> [1]
+                                                    FloatRep     -> [2]
+                                                    CharRep      -> [3]
+                                                    NoRep        -> [4]
+       ctorID :: Set String -> Constr -> [Byte]
+       ctorID set c = 
+            concatMap (bytes . ord) (concat $ intersperse "\0" $ showConstr c : constrFields c)
+             ++ [0, if constrFixity c == Prefix then 1 else 2] 
+             ++ concatMap (\(VersionID x) -> bytes x) (gmapQ (structureID set . dataTypeOf) 
+                                                                    $ assertType x $ fromConstr c)
 
 -----------------------
 

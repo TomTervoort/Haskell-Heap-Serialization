@@ -4,7 +4,7 @@
      
      The module currently only works with GHC under Linux or Windows.
 -} 
-module Data.Serialization.Internal.ProgramVersionID (checksum, programVersionID) where 
+module Data.Serialization.Internal.ProgramVersionID (checksum, checksumInt, programVersionID) where 
 
 import Data.List
 import System.IO
@@ -42,6 +42,10 @@ checksum = fletcher 0 0 . map fromIntegral
        fletcher s1 s2 (x:xs) = let a = s1 + x
                                    b = s2 + a
                                 in s1 `seq` s2 `seq` fletcher a b xs
+                                
+checksumInt :: [Word8] -> Int
+checksumInt x = let c = checksum x 
+                 in fromIntegral $ (c `shiftR` 32) `xor` c
 
 -- Used to memoize the program binary checksum.
 cachedPid :: IORef (Maybe Word64)

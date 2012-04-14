@@ -9,6 +9,7 @@ module Data.Serialization
       fromBytes,
       serialVersionID,
       sid,
+      combineVIDs,
       dependencies,
       constBytesSize,
       listToBytes,
@@ -76,10 +77,8 @@ type Byte = Word8
                             
 combineVIDs :: [VersionID] -> VersionID
 combineVIDs vids | ProgramUniqueVID `elem` vids = ProgramUniqueVID
-                 | otherwise =  VersionID $ toInt $ checksum $ concatMap bytes 
+                 | otherwise =  VersionID $ checksumInt $ concatMap bytes 
                                           $ map (\(VersionID i) -> i) vids
- where toInt :: Word64 -> Int
-       toInt x = fromIntegral $ (x `shiftR` 32) `xor` x
 
 -----------------
 

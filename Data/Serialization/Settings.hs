@@ -2,6 +2,8 @@
 module Data.Serialization.Settings where
 
 import Data.Serialization
+import Data.Serialization.Internal.IntegralBytes
+import Data.Serialization.Internal.ProgramVersionID
 
 import Data.List
 import System.IO
@@ -28,18 +30,17 @@ import Data.Array.IO (IOArray)
 import Data.Array.Unboxed (UArray)
 import Data.Array.ST (STArray)
 
-data Serializer a = Serializer (a -> [Byte]) ([Byte] -> a) 
+data Serializer a = Serializer (a -> [Byte]) ([Byte] -> a)
                   | NoSerializer
 
 
-data SWrapper = SWrapper (Generic Serializer)
-              | SWrapper1 (SerializationSettings -> SWrapper)
+data SWrapper = SWrapper (Generic Serializer) VersionID
 
 type TypeKey = Int -- TODO: Replace with TypeRep
 
 data SerializationSettings = SerializationSettings {
-                               specializedInstances :: Map TypeKey SWrapper
-                               -- TODO ...
+                               specializedInstances :: Map TypeKey SWrapper,
+                               settingsVID :: VersionID
                              }
                              
 typeKey :: TypeRep -> TypeKey
@@ -49,7 +50,7 @@ assertType :: a -> a -> a
 assertType _ x = x
 
 sWrapper :: (Serializable a, Data a) => a -> (TypeKey, SWrapper)
-sWrapper x = (typeKey $ typeOf x, SWrapper getSerializer)
+sWrapper x = (typeKey $ typeOf x, SWrapper getSerializer $ serialVersionID x)
  where getSerializer :: Data b => b -> Serializer b
        getSerializer y = if typeOf y == typeOf x
                           then Serializer (toBytes . assertType x . fromJust . cast) (fromJust . cast . assertType x . fromBytes)
@@ -57,7 +58,7 @@ sWrapper x = (typeKey $ typeOf x, SWrapper getSerializer)
                           
 
 sWrapper1 :: (Serializable1 f, Data (f a)) => SerializationSettings -> f a -> (TypeKey, SWrapper)
-sWrapper1 set x = (typeKey $ typeOf x, SWrapper getSerializer)
+sWrapper1 set x = (typeKey $ typeOf x, SWrapper getSerializer $ serialVersionID1 x)
  where getSerializer :: Data b => b -> Serializer b
        getSerializer y = if typeRepTyCon (typeOf y) == typeRepTyCon (typeOf1 x)
                           then case specializedSerializer set y of
@@ -68,8 +69,8 @@ sWrapper1 set x = (typeKey $ typeOf x, SWrapper getSerializer)
 specializedSerializer :: (Data a) => SerializationSettings -> a -> Serializer a
 specializedSerializer set x = findMatch $ specializedInstances set
  where findMatch map = case M.lookup (typeKey $ typeOf x) map of
-                        Nothing           -> NoSerializer
-                        Just (SWrapper s) -> s x
+                        Nothing             -> NoSerializer
+                        Just (SWrapper s _) -> s x
                                                                          
 standardSpecializations :: [(TypeKey, SWrapper)]
 standardSpecializations = [
@@ -98,11 +99,17 @@ standardSpecializations = [
 
 defaultSettings :: SerializationSettings
 defaultSettings = SerializationSettings {
-                                          specializedInstances = M.fromList standardSpecializations
+                                          specializedInstances = M.fromList standardSpecializations,
+                                          settingsVID = VersionID 1
                                         }
 
 addSerializableSpecialization :: (Serializable a, Data a) => a -> SerializationSettings -> SerializationSettings
-addSerializableSpecialization x set = set {specializedInstances = uncurry M.insert (sWrapper x) $ specializedInstances set}
+addSerializableSpecialization x set = set {specializedInstances = uncurry M.insert (sWrapper x) 
+                                                                    $ specializedInstances set,
+                                           settingsVID = combineVIDs [serialVersionID x, 
+                                                                      typeVID x,
+                                                                      settingsVID set]}
+ where typeVID = VersionID . checksumInt . concatMap (bytes . ord) . show . typeOf
 
 addSerSpec :: (Serializable a, Data a) => a -> SerializationSettings -> SerializationSettings
 addSerSpec = addSerializableSpecialization
