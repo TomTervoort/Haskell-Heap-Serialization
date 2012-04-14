@@ -28,6 +28,7 @@ module Data.Serialization
       Serializable1 (..)
     ) where
 
+import Data.Serialization.Internal
 import Data.Serialization.Internal.IntegralBytes
 import Data.Serialization.Internal.ProgramVersionID
 
@@ -60,11 +61,9 @@ type LazyByteString = BL.ByteString
  
 -----------------
 
-type TypeID = String
-
 -- Returns a unique identifier for the type of a Typeable value.
 typeID :: Typeable a => a -> TypeID
-typeID = show . typeOf -- TODO: dataTypeName . dataTypeOf
+typeID = show . typeOf
 
 -- Current version of the serialization library.
 libraryVersion :: String
@@ -74,21 +73,13 @@ libraryVersion = "serihask001"
 type Byte = Word8
 
 -----------------
-
--- | A datatype containing a version of a serialization method. ProgramUniqueVID indicates only 
--- | serialized objects of the same build of the same program are compatible.
-data VersionID = VersionID Int
-               | ProgramUniqueVID 
-                deriving (Eq, Show)
-                              
+                            
 combineVIDs :: [VersionID] -> VersionID
 combineVIDs vids | ProgramUniqueVID `elem` vids = ProgramUniqueVID
                  | otherwise =  VersionID $ toInt $ checksum $ concatMap bytes 
                                           $ map (\(VersionID i) -> i) vids
  where toInt :: Word64 -> Int
        toInt x = fromIntegral $ (x `shiftR` 32) `xor` x
-
-data Serialized = Serialized {dataType :: TypeID, serializerVersion :: VersionID, dataPacket :: ByteString} deriving Show
 
 -----------------
 
@@ -320,6 +311,17 @@ instance Serializable Bool where
  toBytes True = [maxBound]
  fromBytes [x] = x /= 0
  constBytesSize _ = Just 1
+ -- List specialization: encode as bitstrings.
+ listToBytes xs = let padding = 8 - length xs `mod` 8
+                   in fromIntegral padding : ltb (replicate padding False ++ xs)
+  where ltb [] = []
+        ltb xs = let (a,b) = splitAt 8 xs
+                  in foldr setBit' 0 (zip (reverse [0..7]) a) : ltb b
+        setBit' (bit, bool) | bool      = flip setBit bit
+                            | otherwise = flip clearBit bit
+ listFromBytes (padding:xs) = drop (fromIntegral padding) $ lfb xs
+  where lfb [] = []
+        lfb (x:xs) = map (testBit x) (reverse [0..7]) ++ lfb xs
 
 
 ------------------------------------------------------

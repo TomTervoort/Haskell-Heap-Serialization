@@ -20,38 +20,58 @@ import Data.Word
 import Data.ByteString (ByteString)
 import Data.Text (Text)
 
+import Data.Map (Map)
+import qualified Data.Map as M
+
 import Data.Array (Array)
 import Data.Array.IO (IOArray)
 import Data.Array.Unboxed (UArray)
 import Data.Array.ST (STArray)
 
-data Serializer a = Serializer (a -> [Byte]) ([Byte] -> a)
+data Serializer a = Serializer (a -> [Byte]) ([Byte] -> a) 
                   | NoSerializer
-                  --TODO: | RecursiveSerializer ([SWrapper] -> Serializer a)
-                  deriving (Typeable, Data)
 
 
 data SWrapper = SWrapper (Generic Serializer)
+              | SWrapper1 (SerializationSettings -> SWrapper)
+
+type TypeKey = Int -- TODO: Replace with TypeRep
 
 data SerializationSettings = SerializationSettings {
-                               specializedInstances :: [SWrapper] -- TODO: Map TypeRep SWrapper
+                               specializedInstances :: Map TypeKey SWrapper
                                -- TODO ...
                              }
+                             
+typeKey :: TypeRep -> TypeKey
+typeKey = unsafePerformIO . typeRepKey -- TODO: replace with id
 
 assertType :: a -> a -> a
 assertType _ x = x
 
-assertType1 :: f a -> f b -> f b
-assertType1 _ x = x
-
-sWrapper :: (Serializable a, Data a) => a -> SWrapper
-sWrapper x = SWrapper getSerializer
+sWrapper :: (Serializable a, Data a) => a -> (TypeKey, SWrapper)
+sWrapper x = (typeKey $ typeOf x, SWrapper getSerializer)
  where getSerializer :: Data b => b -> Serializer b
        getSerializer y = if typeOf y == typeOf x
                           then Serializer (toBytes . assertType x . fromJust . cast) (fromJust . cast . assertType x . fromBytes)
                           else NoSerializer 
                           
-standardSpecializations :: [SWrapper]
+
+sWrapper1 :: (Serializable1 f, Data (f a)) => SerializationSettings -> f a -> (TypeKey, SWrapper)
+sWrapper1 set x = (typeKey $ typeOf x, SWrapper getSerializer)
+ where getSerializer :: Data b => b -> Serializer b
+       getSerializer y = if typeRepTyCon (typeOf y) == typeRepTyCon (typeOf1 x)
+                          then case specializedSerializer set y of
+                                n@NoSerializer -> n
+                                Serializer to from -> undefined --TODO
+                          else NoSerializer
+                          
+specializedSerializer :: (Data a) => SerializationSettings -> a -> Serializer a
+specializedSerializer set x = findMatch $ specializedInstances set
+ where findMatch map = case M.lookup (typeKey $ typeOf x) map of
+                        Nothing           -> NoSerializer
+                        Just (SWrapper s) -> s x
+                                                                         
+standardSpecializations :: [(TypeKey, SWrapper)]
 standardSpecializations = [
                              sWrapper (u :: Int),
                              sWrapper (u :: Integer),
@@ -78,23 +98,13 @@ standardSpecializations = [
 
 defaultSettings :: SerializationSettings
 defaultSettings = SerializationSettings {
-                                          specializedInstances = standardSpecializations
+                                          specializedInstances = M.fromList standardSpecializations
                                         }
 
-seriSettings :: IORef SerializationSettings
-{-# NOINLINE seriSettings #-}
-seriSettings = unsafePerformIO $ newIORef defaultSettings
-
-getSerializationSettings :: IO SerializationSettings
-getSerializationSettings = readIORef seriSettings
-
-updateSerializationSettings :: (SerializationSettings -> SerializationSettings) -> IO ()
-updateSerializationSettings = modifyIORef seriSettings
-
-setSerializationSettings :: SerializationSettings -> IO ()
-setSerializationSettings = writeIORef seriSettings
-
 addSerializableSpecialization :: (Serializable a, Data a) => a -> SerializationSettings -> SerializationSettings
-addSerializableSpecialization x set = set {specializedInstances = sWrapper x : specializedInstances set}
+addSerializableSpecialization x set = set {specializedInstances = uncurry M.insert (sWrapper x) $ specializedInstances set}
+
+addSerSpec :: (Serializable a, Data a) => a -> SerializationSettings -> SerializationSettings
+addSerSpec = addSerializableSpecialization
 
 

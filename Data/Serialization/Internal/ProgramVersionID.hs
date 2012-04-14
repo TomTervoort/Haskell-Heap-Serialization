@@ -24,6 +24,8 @@ import Foreign.C.String
 import Foreign.Marshal.Array
 import Foreign.Marshal.Alloc
 
+import Debug.Trace
+
 import qualified Data.ByteString.Lazy as BSL
 
 type LazyByteString = BSL.ByteString
