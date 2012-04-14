@@ -11,6 +11,7 @@ import Control.Monad
 import Data.List
 import Data.Maybe
 import Data.Char
+import Data.Ord
 
 import Data.IORef
 import Data.Typeable
@@ -22,57 +23,78 @@ import Data.Word
 import Data.ByteString (ByteString)
 import Data.Text (Text)
 
-import Data.Map (Map)
-import qualified Data.Map as M
+import Data.Hashable
+import Data.HashMap (Map)
+import qualified Data.HashMap as M
 
 import Data.Array (Array)
 import Data.Array.IO (IOArray)
 import Data.Array.Unboxed (UArray)
 import Data.Array.ST (STArray)
 
+import Debug.Trace
+
 data Serializer a = Serializer (a -> [Byte]) ([Byte] -> a)
+                  | Serializer1 (forall b. Data b => (b -> [Byte], [Byte] -> b) -> Serializer a)
                   | NoSerializer
 
 
 data SWrapper = SWrapper (Generic Serializer) VersionID
 
-type TypeKey = Int -- TODO: Replace with TypeRep
+data TypeKey = TypeKey {unKey :: (Either TypeRep TyCon)} deriving Eq
 
 data SerializationSettings = SerializationSettings {
-                               specializedInstances :: Map TypeKey SWrapper,
+                               specializedInstances :: Map TypeKey (SerializationSettings -> SWrapper),
                                settingsVID :: VersionID
                              }
                              
+instance Ord TypeKey where
+ compare = comparing $ either (Left . unsafePerformIO . typeRepKey) (Right . tyConString) . unKey
+
+instance Hashable TypeKey where
+ hash = either (hash . unsafePerformIO . typeRepKey) (hash . tyConString) . unKey
+
+
 typeKey :: TypeRep -> TypeKey
-typeKey = unsafePerformIO . typeRepKey -- TODO: replace with id
+typeKey = TypeKey . Left
+
+typeKey1 :: TypeRep -> TypeKey
+typeKey1 = TypeKey . Right . typeRepTyCon
 
 assertType :: a -> a -> a
 assertType _ x = x
 
-sWrapper :: (Serializable a, Data a) => a -> (TypeKey, SWrapper)
-sWrapper x = (typeKey $ typeOf x, SWrapper getSerializer $ serialVersionID x)
+assertType1 :: f a -> f b -> f b
+assertType1 _ x = x
+
+sWrapper :: (Serializable a, Data a) => a -> (TypeKey, SerializationSettings -> SWrapper)
+sWrapper x = (typeKey $ typeOf x, const $ SWrapper getSerializer $ serialVersionID x)
  where getSerializer :: Data b => b -> Serializer b
        getSerializer y = if typeOf y == typeOf x
-                          then Serializer (toBytes . assertType x . fromJust . cast) (fromJust . cast . assertType x . fromBytes)
+                          then Serializer (toBytes . assertType x . fromJust . cast) 
+                                          (fromJust . cast . assertType x . fromBytes)
                           else NoSerializer 
                           
 
-sWrapper1 :: (Serializable1 f, Data (f a)) => SerializationSettings -> f a -> (TypeKey, SWrapper)
-sWrapper1 set x = (typeKey $ typeOf x, SWrapper getSerializer $ serialVersionID1 x)
- where getSerializer :: Data b => b -> Serializer b
-       getSerializer y = if typeRepTyCon (typeOf y) == typeRepTyCon (typeOf1 x)
-                          then case specializedSerializer set y of
-                                n@NoSerializer -> n
-                                Serializer to from -> undefined --TODO
-                          else NoSerializer
+sWrapper1 :: (Serializable1 f, Data (f a)) => f a -> (TypeKey, SerializationSettings -> SWrapper)
+sWrapper1 x = (typeKey1 $ typeOf1 x, \s -> SWrapper (getSerializer s) $ serialVersionID1 x)
+ where getSerializer :: Data b => SerializationSettings -> b -> Serializer b
+       getSerializer set y = if typeRepTyCon (typeOf y) == typeRepTyCon (typeOf1 x)
+                              then Serializer1 makeS
+                              else NoSerializer
+       makeS :: (Data b, Data c) => (c -> [Byte], [Byte] -> c) -> Serializer b
+       makeS (to, from) = Serializer (toBytes1 to . assertType1 x . fromJust . cast)
+                                     (fromJust . cast . assertType1 x . fromBytes1 from)
                           
 specializedSerializer :: (Data a) => SerializationSettings -> a -> Serializer a
 specializedSerializer set x = findMatch $ specializedInstances set
- where findMatch map = case M.lookup (typeKey $ typeOf x) map of
-                        Nothing             -> NoSerializer
-                        Just (SWrapper s _) -> s x
+ where findMatch map = case M.lookup (typeKey1 $ typeOf x) map of
+                        Just f  -> let (SWrapper s _) = f set in s x
+                        Nothing -> case M.lookup (typeKey $ typeOf x) map of
+                                    Just f  -> let (SWrapper s _) = f set in s x
+                                    Nothing -> NoSerializer
                                                                          
-standardSpecializations :: [(TypeKey, SWrapper)]
+standardSpecializations :: [(TypeKey, SerializationSettings -> SWrapper)]
 standardSpecializations = [
                              sWrapper (u :: Int),
                              sWrapper (u :: Integer),

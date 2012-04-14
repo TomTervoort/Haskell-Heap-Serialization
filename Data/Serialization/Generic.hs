@@ -50,12 +50,15 @@ data Test3 a b = Blaat a (Either a b) b
 -----
 
 genericToBytes :: (Data a) => SerializationSettings -> a -> [Byte]
-genericToBytes set d = case specializedSerializer set d of
-                        Serializer to _ -> to d
-                        NoSerializer    -> case dataTypeRep $ dataTypeOf d of
-                                            AlgRep _     -> varbytes (constrIndex $ toConstr d) ++ concatWithLengths (gmapQ (genericToBytes set) d) 
-                                            _ -> error $ "A specialized serializer is required for type " ++ dataTypeName (dataTypeOf d)
- where concatWithLengths [] = []
+genericToBytes set d = use $ specializedSerializer set d
+ where use s = case s of
+                Serializer to _ -> to d
+                Serializer1 f   -> undefined -- TODO
+                NoSerializer    -> case dataTypeRep $ dataTypeOf d of
+                                    AlgRep _     -> varbytes (constrIndex $ toConstr d) ++ concatWithLengths (gmapQ (genericToBytes set) d) 
+                                    _ -> error $ "A specialized serializer is required for type " ++ dataTypeName (dataTypeOf d)
+
+       concatWithLengths [] = []
        concatWithLengths (x:xs) = varbytes (length x) ++ x ++ concatWithLengths xs
 
 

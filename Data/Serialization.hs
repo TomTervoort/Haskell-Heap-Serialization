@@ -80,6 +80,19 @@ combineVIDs vids | ProgramUniqueVID `elem` vids = ProgramUniqueVID
                  | otherwise =  VersionID $ checksumInt $ concatMap bytes 
                                           $ map (\(VersionID i) -> i) vids
 
+------------------
+
+someListToBytes :: (a -> [Byte]) -> [a] -> [Byte]
+someListToBytes _ [] = []
+someListToBytes f (x:xs) = let bx = f x 
+                            in concat [varbytes $ length bx, bx, someListToBytes f xs]
+                            
+someListFromBytes :: ([Byte] -> a) -> [Byte] -> [a]
+someListFromBytes _ [] = []
+someListFromBytes f str = let (len, str1)  = varunbytes str
+                              (str2, rest) = splitAt len str1
+                           in f str2 : someListFromBytes f rest
+
 -----------------
 
 class Typeable a => Serializable a where
@@ -96,21 +109,15 @@ class Typeable a => Serializable a where
  
  listToBytes :: [a] -> [Byte]
  listToBytes l | isJust $ constBytesSize $ head l = concatMap toBytes l
-               | otherwise = listToBytes' l
-  where listToBytes' [] = []
-        listToBytes' (x:xs) = let bx = toBytes x in concat [varbytes $ length bx, bx, listToBytes' xs]
+               | otherwise = someListToBytes toBytes l
  listFromBytes :: [Byte] -> [a]
  listFromBytes l = case constBytesSize $ head defaultresult of
                     Nothing -> defaultresult
                     Just n  -> chunks n l
-  where defaultresult = listFromBytes' l
+  where defaultresult = someListFromBytes fromBytes l
         chunks _ [] = []
         chunks n xs = case splitAt n xs of
                        (c, rest) -> fromBytes c : chunks n rest
-        listFromBytes' []  = []
-        listFromBytes' str = let (len, str1)  = varunbytes str
-                                 (str2, rest) = splitAt len str1
-                              in fromBytes str2 : listFromBytes' rest
  
 ------------------------------------------
 
@@ -326,16 +333,16 @@ instance Serializable Bool where
 ------------------------------------------------------
 
 class Typeable1 f => Serializable1 f where
- toBytes1 :: Serializable a => f a -> [Byte]
- fromBytes1 :: Serializable a => [Byte] -> f a
+ toBytes1 :: (a -> [Byte]) -> f a -> [Byte]
+ fromBytes1 :: ([Byte] -> a) -> [Byte] -> f a
  serialVersionID1 :: f a -> VersionID
  serialVersionID1 _ = ProgramUniqueVID
  dependencies1 :: Serializable a => f a -> [VersionID]
  dependencies1 _ = []
 
 instance (Serializable1 f, Serializable a) => Serializable (f a) where
- toBytes = toBytes1
- fromBytes = fromBytes1
+ toBytes = toBytes1 toBytes
+ fromBytes = fromBytes1 fromBytes
  serialVersionID = serialVersionID1
  dependencies fa = serialVersionID a : dependencies a ++ dependencies1 fa
   where a = innerType fa
@@ -345,15 +352,15 @@ instance (Serializable1 f, Serializable a) => Serializable (f a) where
 
 instance Serializable1 [] where
  serialVersionID1 _ = VersionID 1
- toBytes1 = listToBytes
- fromBytes1 = listFromBytes
+ toBytes1 = someListToBytes
+ fromBytes1 = someListFromBytes
  
 instance Serializable1 Maybe where
  serialVersionID1 _ = VersionID 1
- toBytes1 Nothing  = []
- toBytes1 (Just x) = 0 : toBytes x
- fromBytes1 [] = Nothing
- fromBytes1 (_:xs) = Just $ fromBytes xs
+ toBytes1 _ Nothing  = []
+ toBytes1 f (Just x) = 0 : f x
+ fromBytes1 _ [] = Nothing
+ fromBytes1 f (_:xs) = Just $ f xs
  
 
 -- TODO: Serializable2
