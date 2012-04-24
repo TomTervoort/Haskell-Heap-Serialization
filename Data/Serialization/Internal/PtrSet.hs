@@ -1,5 +1,5 @@
-{-# LANGUAGE RankNTypes, ExistentialQuantification, MagicHash #-}
-module Data.Serialization.Internal.PtrSet (PtrSet, PtrKey, newPtrSet, ptrSetAdd, ptrSetMember) where
+{-# LANGUAGE RankNTypes, ExistentialQuantification, MagicHash, DeriveDataTypeable #-}
+module Data.Serialization.Internal.PtrSet (PtrSet, PtrKey, newPtrSet, ptrSetAdd, ptrSetAdd', ptrSetMember) where
 
 import Data.List
 import System.IO
@@ -11,10 +11,12 @@ import Data.Bits
 import Control.Exception
 
 import Data.Typeable
+import Data.Dynamic
 import Data.Data
 import Data.Generics
 import Data.IORef
 import Data.Array (Ix)
+import Data.Hashable
 
 import Foreign.StablePtr
 import System.Mem.Weak
@@ -26,8 +28,8 @@ import GHC.Exts
 
 ------------------
 
-data PtrBox a = PtrBox a
-data SBoxPtr = forall a. SBoxPtr (StablePtr (PtrBox a))
+data PtrBox a = PtrBox a deriving Typeable
+data SBoxPtr = SBoxPtr (StablePtr Dynamic)
 
 data GCCheckPoint = forall a. GCCheckPoint (Weak a)
 
@@ -35,8 +37,7 @@ data GCCheckPoint = forall a. GCCheckPoint (Weak a)
 
 data PtrSet = PtrSet [SBoxPtr]
 
-data PtrKey = PtrKey Int
-               deriving (Eq, Ord, Ix, Show)
+type PtrKey = Int
 
 -------------------------
 
@@ -58,26 +59,32 @@ unsafePtrCompare a b = reallyUnsafePtrEquality# a b /=# 0#
 
 -- Tests whether a stable pointer points to the same value as another pointer. This operation is 
 -- atomic within GC runs.
-stablePtrCompare :: a -> SBoxPtr -> IO Bool
+stablePtrCompare :: Typeable a => a -> SBoxPtr -> IO Bool
 stablePtrCompare x b@(SBoxPtr sp) = do cp <- gcCheckPoint
-                                       (PtrBox y) <- deRefStablePtr $ unsafeCoerce# sp
-                                       eq <- evaluate $ unsafePtrCompare x y
-                                       gc <- gcHasRun cp
-                                       if gc
-                                        then stablePtrCompare x b
-                                        else return eq                            
-                             
+                                       box <- deRefStablePtr sp
+                                       case fromDynamic box of
+                                        Nothing         -> return False
+                                        Just (PtrBox y) -> 
+                                            do eq <- evaluate $ unsafePtrCompare x y
+                                               gc <- gcHasRun cp
+                                               if gc
+                                                then stablePtrCompare x b
+                                                else return eq
+                     
 -----------------------
 
 newPtrSet :: IO PtrSet
 newPtrSet = return $ PtrSet []
 
-ptrSetAdd :: a -> PtrSet -> IO PtrSet
-ptrSetAdd x (PtrSet ps) = do sp <- newStablePtr $ PtrBox x
-                             return $ PtrSet $ ps ++ [SBoxPtr sp]
+ptrSetAdd :: Typeable a => a -> PtrSet -> IO PtrSet
+ptrSetAdd x s = fmap fst $ ptrSetAdd' x s
 
-ptrSetMember :: a -> PtrSet -> IO (Maybe PtrKey)
+ptrSetAdd' :: Typeable a => a -> PtrSet -> IO (PtrSet, PtrKey)
+ptrSetAdd' x (PtrSet ps) = do sp <- newStablePtr $ toDyn $ PtrBox x
+                              return (PtrSet $ ps ++ [SBoxPtr sp], length ps)
+
+ptrSetMember :: Typeable a => a -> PtrSet -> IO (Maybe PtrKey)
 ptrSetMember x (PtrSet ps) = do cmp <- forM ps (stablePtrCompare x)
-                                return $ fmap PtrKey $ findIndex id cmp
+                                return $ findIndex id cmp
 
 

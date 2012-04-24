@@ -12,6 +12,7 @@ import Data.Serialization.Settings
 import Data.Serialization.Internal
 import Data.Serialization.Internal.IntegralBytes 
 import Data.Serialization.Internal.ProgramVersionID
+import Data.Serialization.Internal.PtrSet
 
 import Data.List
 import System.IO
@@ -20,9 +21,10 @@ import Data.List
 import Data.Maybe
 import Data.Char
 import Data.Bits
+import Data.IORef
 
-import Data.Map (Map)
-import qualified Data.Map as M
+import Data.HashMap (Map)
+import qualified Data.HashMap as M
 
 import Data.Hashable
 import Data.HashSet (Set)
@@ -49,27 +51,65 @@ data Test3 a b = Blaat a (Either a b) b
                
 -----
 
-genericToBytes :: (Data a) => SerializationSettings -> a -> [Byte]
-genericToBytes set d = use $ specializedSerializer set d
+type RefMap = Map PtrKey [Byte]
+
+concatWithLengths :: [[Byte]] -> [Byte]
+concatWithLengths [] = []
+concatWithLengths (x:xs) = varbytes (length x) ++ x ++ concatWithLengths xs
+
+genericToBytes :: (Data a) => SerializationSettings -> a -> IO [Byte]
+genericToBytes s d = do ps <- newPtrSet
+                        (bs, _, rm) <- genericToBytes' s d (ps, M.empty)
+                        let rmbytes = serializeRefMap rm
+                        return $ varbytes (length rmbytes) ++ rmbytes ++ bs
+
+ where serializeRefMap :: RefMap -> [Byte]
+       serializeRefMap = concatWithLengths . map (\(k,bs) -> varbytes k ++ bs) . M.toList
+
+genericToBytes' :: (Data a) => SerializationSettings -> a -> (PtrSet, RefMap) -> IO ([Byte], PtrSet, RefMap)
+genericToBytes' set d (ps, rm) = do memb <- ptrSetMember d ps
+                                    case memb of
+                                     Just k  -> return (varbytes k, ps, rm)
+                                     Nothing -> do (bs, ps', rm') <- use (specializedSerializer set d)
+                                                   (ps'', k) <- ptrSetAdd' d ps'
+                                                   let bs' = bs
+                                                   let rm'' = M.insert k bs' rm'
+                                                   -- TODO: If something is not larger than an Int, 
+                                                   -- do not put it in the refmap but serialize it 
+                                                   -- in place.
+                                                   return (varbytes k, ps'', rm'')
  where use s = case s of
-                Serializer to _ -> to d
+                Serializer to _ -> return (to d, ps, rm)
                 Serializer1 f   -> undefined -- TODO
                 NoSerializer    -> case dataTypeRep $ dataTypeOf d of
-                                    AlgRep _     -> varbytes (constrIndex $ toConstr d) ++ concatWithLengths (gmapQ (genericToBytes set) d) 
-                                    _ -> error $ "A specialized serializer is required for type " ++ dataTypeName (dataTypeOf d)
-
-       concatWithLengths [] = []
-       concatWithLengths (x:xs) = varbytes (length x) ++ x ++ concatWithLengths xs
+                                    AlgRep ctors -> do let fs = gmapQ (genericToBytes' set) d
+                                                       ref <- newIORef (ps, rm)
+                                                       xs <- forM fs
+                                                               (\f -> do tup <- readIORef ref
+                                                                         (bs, ps', rm') <- f tup
+                                                                         writeIORef ref (ps', rm')
+                                                                         return bs)
+                                                       (ps', rm') <- readIORef ref
+                                                       let ctorRep | length ctors == 1 = []
+                                                                   | otherwise = varbytes (constrIndex $ toConstr d)
+                                                       return (ctorRep ++ concatWithLengths xs, ps', rm')
+                                    _ -> error $ "A specialized serializer is required for type " 
+                                                    ++ dataTypeName (dataTypeOf d)
 
 
 data Unfolder r = Unfolder [Byte] r              
  
-genericFromBytes :: (Data a) => SerializationSettings -> [Byte] -> a
-genericFromBytes set bs = result
+-- TODO
+genericFromBytes :: (Data a) => SerializationSettings -> [Byte] -> IO a
+genericFromBytes s b = undefined -- return $ genericFromBytes' s b
+
+genericFromBytes' :: Data a => SerializationSettings -> [Byte] -> a
+genericFromBytes' set bs = result
  where result = case specializedSerializer set result of
                         Serializer _ from -> from bs
                         NoSerializer      -> case dataTypeRep $ dataTypeOf result of
-                                              AlgRep ctors -> let (i,xs) = varunbytes bs
+                                              AlgRep ctors -> let (i,xs) | length ctors == 1 = (1,bs)
+                                                                         | otherwise = varunbytes bs
                                                                   ctor = ctors !! (i - 1)
                                                                   (Unfolder left x) = gunfold unfolder (Unfolder xs) ctor
                                                                in if null left
@@ -80,11 +120,11 @@ genericFromBytes set bs = result
        unfolder :: Data b => Unfolder (b -> r) -> Unfolder r
        unfolder (Unfolder bs f) = let (len, bs')   = varunbytes bs
                                       (curr, rest) = splitAt len bs'
-                                   in Unfolder rest (f $ genericFromBytes set curr)
+                                   in Unfolder rest (f $ genericFromBytes' set curr)
        
        
-genericTest :: (Data a) => a -> a
-genericTest = genericFromBytes defaultSettings . genericToBytes defaultSettings
+genericTest :: (Data a) => a -> IO a
+genericTest x = genericToBytes defaultSettings x >>= genericFromBytes defaultSettings
 
 genericVersionID :: (Data a) => SerializationSettings -> a -> VersionID
 genericVersionID set x = combineVIDs $ [settingsVID set, structureID S.empty $ dataTypeOf x] 
@@ -112,23 +152,27 @@ genericVersionID set x = combineVIDs $ [settingsVID set, structureID S.empty $ d
 gsTypeID :: Data a => a -> TypeID
 gsTypeID x = '$' : dataTypeName (dataTypeOf x)
 
-serializeWith :: Data a => SerializationSettings -> a -> Serialized
-serializeWith set x = Serialized {
+serializeWith :: Data a => SerializationSettings -> a -> IO Serialized
+serializeWith set x = do packet <- genericToBytes set x
+                         return Serialized {
                                   -- The type name is prepended with a $ in order to indicate usage
                                   -- of the generic serializer.
                                   dataType = gsTypeID x,
                                   serializerVersion = genericVersionID set x, 
-                                  dataPacket = B.pack $ genericToBytes set x
+                                  dataPacket = B.pack $ packet
                                  }
 
-serialize :: Data a => a -> Serialized
+serialize :: Data a => a -> IO Serialized
 serialize = serializeWith defaultSettings
 
-deserializeWith :: Data a => SerializationSettings -> Serialized -> Maybe a
-deserializeWith set (Serialized tid sv dp) | tid /= gsTypeID result = Nothing
-                                           | sv /= genericVersionID set result = error "Version of serializer used for this object does not match the current one."
-                                           | otherwise = Just result
-  where result = genericFromBytes set $ B.unpack dp
+deserializeWith :: Data a => SerializationSettings -> Serialized -> IO (Maybe a)
+deserializeWith set (Serialized tid sv dp) = do result <- genericFromBytes set $ B.unpack dp
+                                                if tid /= gsTypeID result 
+                                                 then return Nothing
+                                                 else
+                                                  if sv /= genericVersionID set result
+                                                   then error "Version of serializer used for this object does not match the current one."
+                                                   else return $ Just result
 
-deserialize :: Data a => Serialized -> Maybe a
+deserialize :: Data a => Serialized -> IO (Maybe a)
 deserialize = deserializeWith defaultSettings

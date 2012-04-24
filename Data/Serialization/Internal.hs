@@ -12,4 +12,6 @@ data VersionID = VersionID Int
 
 type TypeID = String
 
-data Serialized = Serialized {dataType :: TypeID, serializerVersion :: VersionID, dataPacket :: ByteString} deriving Show
+data Serialized = Serialized {dataType :: TypeID, 
+                              serializerVersion :: VersionID, 
+                              dataPacket :: ByteString} deriving Show

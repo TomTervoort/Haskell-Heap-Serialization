@@ -129,7 +129,9 @@ completeID :: Serializable a => a -> VersionID
 completeID x = combineVIDs $ serialVersionID x : dependencies x
  
 serialize :: Serializable a => a -> Serialized
-serialize x = Serialized {dataType = typeID x, serializerVersion = completeID x, dataPacket = B.pack $ toBytes x}
+serialize x = Serialized {dataType = typeID x, 
+                          serializerVersion = completeID x, 
+                          dataPacket = B.pack $ toBytes x}
 
 deserialize :: Serializable a => Serialized -> Maybe a
 deserialize (Serialized tid sv dp) | tid /= typeID result = Nothing
