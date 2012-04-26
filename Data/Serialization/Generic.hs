@@ -15,13 +15,13 @@ import Data.Serialization.Internal.ProgramVersionID
 import Data.Serialization.Internal.PtrSet
 
 import Data.List
-import System.IO
 import Control.Monad
 import Data.List
 import Data.Maybe
 import Data.Char
 import Data.Bits
 import Data.IORef
+import System.IO
 
 import Data.HashMap (Map)
 import qualified Data.HashMap as M
@@ -53,6 +53,11 @@ data Test3 a b = Blaat a (Either a b) b
 
 type RefMap = Map PtrKey [Byte]
 
+shorter :: [a] -> Int -> Bool
+shorter _ 0  = False
+shorter [] _ = True
+shorter (_:xs) n = shorter xs (n - 1)
+
 concatWithLengths :: [[Byte]] -> [Byte]
 concatWithLengths [] = []
 concatWithLengths (x:xs) = varbytes (length x) ++ x ++ concatWithLengths xs
@@ -70,14 +75,12 @@ genericToBytes' :: (Data a) => SerializationSettings -> a -> (PtrSet, RefMap) ->
 genericToBytes' set d (ps, rm) = do memb <- ptrSetMember d ps
                                     case memb of
                                      Just k  -> return (varbytes k, ps, rm)
-                                     Nothing -> do (bs, ps', rm') <- use (specializedSerializer set d)
-                                                   (ps'', k) <- ptrSetAdd' d ps'
-                                                   let bs' = bs
-                                                   let rm'' = M.insert k bs' rm'
-                                                   -- TODO: If something is not larger than an Int, 
-                                                   -- do not put it in the refmap but serialize it 
-                                                   -- in place.
-                                                   return (varbytes k, ps'', rm'')
+                                     Nothing -> do t@(bs, ps', rm') <- use (specializedSerializer set d)
+                                                   if shorter bs (sharingLimit set + 1)
+                                                    then return t
+                                                    else do (ps'', k) <- ptrSetAdd' d ps'
+                                                            let rm'' = M.insert k bs rm'
+                                                            return (varbytes k, ps'', rm'')
  where use s = case s of
                 Serializer to _ -> return (to d, ps, rm)
                 Serializer1 f   -> undefined -- TODO
@@ -90,7 +93,7 @@ genericToBytes' set d (ps, rm) = do memb <- ptrSetMember d ps
                                                                          writeIORef ref (ps', rm')
                                                                          return bs)
                                                        (ps', rm') <- readIORef ref
-                                                       let ctorRep | length ctors == 1 = []
+                                                       let ctorRep | shorter ctors 2 = []
                                                                    | otherwise = varbytes (constrIndex $ toConstr d)
                                                        return (ctorRep ++ concatWithLengths xs, ps', rm')
                                     _ -> error $ "A specialized serializer is required for type " 

@@ -45,6 +45,7 @@ data TypeKey = TypeKey {unKey :: (Either TypeRep TyCon)} deriving Eq
 
 data SerializationSettings = SerializationSettings {
                                specializedInstances :: Map TypeKey (SerializationSettings -> SWrapper),
+                               sharingLimit :: Int, -- Do not use sharing when less bytes than this.
                                settingsVID :: VersionID
                              }
                              
@@ -122,7 +123,8 @@ standardSpecializations = [
 defaultSettings :: SerializationSettings
 defaultSettings = SerializationSettings {
                                           specializedInstances = M.fromList standardSpecializations,
-                                          settingsVID = VersionID 1
+                                          settingsVID = VersionID 1,
+                                          sharingLimit = 8
                                         }
 
 addSerializableSpecialization :: (Serializable a, Data a) => a -> SerializationSettings -> SerializationSettings
