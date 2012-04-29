@@ -172,7 +172,7 @@ genericVersionID set x = combineVIDs $ [settingsVID set, structureID S.empty $ d
 -----------------------
 
 gsTypeID :: Data a => a -> TypeID
-gsTypeID x = '$' : dataTypeName (dataTypeOf x)
+gsTypeID x = '$' : show (typeOf x)
 
 serializeWith :: Data a => SerializationSettings -> a -> IO Serialized
 serializeWith set x = do packet <- genericToBytes set x
