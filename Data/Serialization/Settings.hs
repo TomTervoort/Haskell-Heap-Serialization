@@ -1,4 +1,4 @@
-{-# LANGUAGE ExistentialQuantification, RankNTypes, DeriveDataTypeable, FlexibleInstances, FlexibleContexts, UndecidableInstances #-}
+{-# LANGUAGE ExistentialQuantification, RankNTypes, DeriveDataTypeable, FlexibleInstances, FlexibleContexts, UndecidableInstances, CPP #-}
 module Data.Serialization.Settings where
 
 import Data.Serialization
@@ -24,8 +24,8 @@ import Data.ByteString (ByteString)
 import Data.Text (Text)
 
 import Data.Hashable
-import Data.HashMap (Map)
-import qualified Data.HashMap as M
+import Data.Map (Map)
+import qualified Data.Map as M
 
 import Data.Array (Array)
 import Data.Array.IO (IOArray)
@@ -45,15 +45,18 @@ data TypeKey = TypeKey {unKey :: (Either TypeRep TyCon)} deriving Eq
 
 data SerializationSettings = SerializationSettings {
                                specializedInstances :: Map TypeKey (SerializationSettings -> SWrapper),
-                               sharingLimit :: Int, -- Do not use sharing when less bytes than this.
                                settingsVID :: VersionID
                              }
-                             
-instance Ord TypeKey where
- compare = comparing $ either (Left . unsafePerformIO . typeRepKey) (Right . tyConString) . unKey
 
-instance Hashable TypeKey where
- hash = either (hash . unsafePerformIO . typeRepKey) (hash . tyConString) . unKey
+instance Ord TypeKey where
+#if __GLASGOW_HASKELL__ >= 700
+ compare = comparing unKey
+#else
+ compare = comparing $ either (Left . unsafePerformIO . typeRepKey) (Right . tyConString) . unKey
+#endif
+
+{-- instance Hashable TypeKey where
+ hash = either (hash . unsafePerformIO . typeRepKey) (hash . tyConString) . unKey --}
 
 
 typeKey :: TypeRep -> TypeKey
@@ -123,8 +126,7 @@ standardSpecializations = [
 defaultSettings :: SerializationSettings
 defaultSettings = SerializationSettings {
                                           specializedInstances = M.fromList standardSpecializations,
-                                          settingsVID = VersionID 1,
-                                          sharingLimit = 8
+                                          settingsVID = VersionID 1
                                         }
 
 addSerializableSpecialization :: (Serializable a, Data a) => a -> SerializationSettings -> SerializationSettings

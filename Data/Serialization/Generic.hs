@@ -22,11 +22,11 @@ import Data.Char
 import Data.Bits
 import Data.IORef
 import System.IO
-
-import Data.HashMap (Map)
-import qualified Data.HashMap as M
+import Data.Dynamic
 
 import Data.Hashable
+import Data.HashMap (Map)
+import qualified Data.HashMap as M
 import Data.HashSet (Set)
 import qualified Data.HashSet as S
 
@@ -64,23 +64,21 @@ concatWithLengths (x:xs) = varbytes (length x) ++ x ++ concatWithLengths xs
 
 genericToBytes :: (Data a) => SerializationSettings -> a -> IO [Byte]
 genericToBytes s d = do ps <- newPtrSet
-                        (bs, _, rm) <- genericToBytes' s d (ps, M.empty)
-                        let rmbytes = serializeRefMap rm
-                        return $ varbytes (length rmbytes) ++ rmbytes ++ bs
+                        (key, _, rm) <- genericToBytes' s d (ps, M.empty)
+                        return $ varbytes key ++ serializeRefMap rm
 
  where serializeRefMap :: RefMap -> [Byte]
        serializeRefMap = concatWithLengths . map (\(k,bs) -> varbytes k ++ bs) . M.toList
 
-genericToBytes' :: (Data a) => SerializationSettings -> a -> (PtrSet, RefMap) -> IO ([Byte], PtrSet, RefMap)
+genericToBytes' :: (Data a) => SerializationSettings -> a -> (PtrSet, RefMap) -> IO (PtrKey, PtrSet, RefMap)
 genericToBytes' set d (ps, rm) = do memb <- ptrSetMember d ps
                                     case memb of
-                                     Just k  -> return (varbytes k, ps, rm)
-                                     Nothing -> do t@(bs, ps', rm') <- use (specializedSerializer set d)
-                                                   if shorter bs (sharingLimit set + 1)
-                                                    then return t
-                                                    else do (ps'', k) <- ptrSetAdd' d ps'
-                                                            let rm'' = M.insert k bs rm'
-                                                            return (varbytes k, ps'', rm'')
+                                     Just k  -> return (k, ps, rm)
+                                     Nothing -> do (bs, ps', rm') <- use (specializedSerializer set d)
+                                                   (ps'', k) <- ptrSetAdd' d ps'
+                                                   let rm'' = M.insert k bs rm'
+                                                   return (k, ps'', rm'')
+ 
  where use s = case s of
                 Serializer to _ -> return (to d, ps, rm)
                 Serializer1 f   -> undefined -- TODO
@@ -89,42 +87,63 @@ genericToBytes' set d (ps, rm) = do memb <- ptrSetMember d ps
                                                        ref <- newIORef (ps, rm)
                                                        xs <- forM fs
                                                                (\f -> do tup <- readIORef ref
-                                                                         (bs, ps', rm') <- f tup
+                                                                         (k, ps', rm') <- f tup
                                                                          writeIORef ref (ps', rm')
-                                                                         return bs)
+                                                                         return $ varbytes k)
                                                        (ps', rm') <- readIORef ref
                                                        let ctorRep | shorter ctors 2 = []
                                                                    | otherwise = varbytes (constrIndex $ toConstr d)
-                                                       return (ctorRep ++ concatWithLengths xs, ps', rm')
+                                                       return (ctorRep ++ concat xs, ps', rm')
                                     _ -> error $ "A specialized serializer is required for type " 
                                                     ++ dataTypeName (dataTypeOf d)
 
 
-data Unfolder r = Unfolder [Byte] r              
+data Unfolder r = Unfolder ([Byte], DeRefMap) r              
  
--- TODO
+type DeRefMap = Map PtrKey (Either [Byte] Dynamic)
+ 
 genericFromBytes :: (Data a) => SerializationSettings -> [Byte] -> IO a
-genericFromBytes s b = undefined -- return $ genericFromBytes' s b
+genericFromBytes s b = do let (k, b') = varunbytes b
+                          let rm = deRefMap b'
+                          let (Just (Left b'')) = M.lookup k rm
+                          return . fst $ genericFromBytes' s b'' rm
+ where deRefMap :: [Byte] -> DeRefMap
+       deRefMap [] = M.empty
+       deRefMap xs = let (len, xs1) = varunbytes xs
+                         (bs', xs2) = splitAt len xs1
+                         (key, bs)  = varunbytes bs'
+                      in M.insert key (Left bs) $ deRefMap xs2
 
-genericFromBytes' :: Data a => SerializationSettings -> [Byte] -> a
-genericFromBytes' set bs = result
- where result = case specializedSerializer set result of
-                        Serializer _ from -> from bs
-                        NoSerializer      -> case dataTypeRep $ dataTypeOf result of
-                                              AlgRep ctors -> let (i,xs) | length ctors == 1 = (1,bs)
-                                                                         | otherwise = varunbytes bs
-                                                                  ctor = ctors !! (i - 1)
-                                                                  (Unfolder left x) = gunfold unfolder (Unfolder xs) ctor
-                                                               in if null left
-                                                                   then x 
-                                                                   else error $ "Not all bytes are consumed when deserializing as "
-                                                                                  ++ dataTypeName (dataTypeOf result) ++ "."
-                                              _ -> undefined -- Should not occur if versions match.
-       unfolder :: Data b => Unfolder (b -> r) -> Unfolder r
-       unfolder (Unfolder bs f) = let (len, bs')   = varunbytes bs
-                                      (curr, rest) = splitAt len bs'
-                                   in Unfolder rest (f $ genericFromBytes' set curr)
+
+genericFromBytes' :: Data a => SerializationSettings -> [Byte] -> DeRefMap -> (a, DeRefMap)
+genericFromBytes' set bs drm = result
+ where result = case specializedSerializer set $ fst result of
+                 Serializer _ from -> (from bs, drm)
+                 NoSerializer      -> case dataTypeRep dtype of
+                                       AlgRep ctors -> 
+                                        let (i,xs) | length ctors == 1 = (1,bs)
+                                                   | otherwise = varunbytes bs
+                                            ctor = ctors !! (i - 1)
+                                            (Unfolder (left, dm) x) = gunfold unfolder (Unfolder (xs,drm)) ctor
+                                         in if null left
+                                             then (x, dm)
+                                             else error $ "Not all bytes are consumed when deserializing as "
+                                                            ++ dataTypeName dtype ++ "."
+                 _                 -> error $ "A specialized serializer for " ++ dataTypeName dtype
+                                               ++ " is required."
+       dtype = dataTypeOf $ fst result
        
+       unfolder :: Data b => Unfolder (b -> r) -> Unfolder r
+       unfolder (Unfolder (bs, dm) f) = let (key, rest) = varunbytes bs
+                                            x = lookupData dm key
+                                         in Unfolder (rest, snd x) $ f (fst x)
+                                         
+       lookupData :: Data a => DeRefMap -> PtrKey -> (a, DeRefMap)
+       lookupData dm key = case M.lookup key dm of
+                            Just (Right d) -> (fromDyn d undefined, dm)
+                            Just (Left bs) -> let (x,m) = genericFromBytes' set bs dm
+                                               in (x, M.insert key (Right $ toDyn x) dm)
+                            _ -> error "Corrupt data: key not in reference map."
        
 genericTest :: (Data a) => a -> IO a
 genericTest x = genericToBytes defaultSettings x >>= genericFromBytes defaultSettings
