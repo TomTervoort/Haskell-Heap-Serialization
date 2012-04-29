@@ -260,8 +260,8 @@ instance Serializable Text where
  
 instance Serializable Int where
  serialVersionID _ = VersionID 1
- toBytes = bytes
- fromBytes = unbytes
+ toBytes = toBytes . toInteger
+ fromBytes = fromInteger . fromBytes
  constBytesSize = Just . (`div` 8) . bitSize
  
 instance Serializable Word where
@@ -288,8 +288,11 @@ instance Serializable Byte where
 instance Serializable Integer where
  serialVersionID _ = VersionID 1
  toBytes 0 = []
- toBytes i = fromIntegral (i .&. 0xff) : toBytes (i `rotateR` 8)
- fromBytes = fromBytes' 0 . reverse
+ toBytes i | i < 0 = toBytes (-i) ++ [0]
+           | otherwise = fromIntegral (i .&. 0xff) : toBytes (i `rotateR` 8)
+ fromBytes xs = case reverse xs of
+                 (0:ys) -> (-1) * fromBytes' 0 ys
+                 ys      -> fromBytes' 0 ys
   where fromBytes' i []     = i
         fromBytes' i (x:xs) = fromBytes' (i `rotateL` 8 .|. toInteger x) xs
   
