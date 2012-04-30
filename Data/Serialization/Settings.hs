@@ -44,7 +44,7 @@ data SWrapper = SWrapper (Generic Serializer) VersionID
 data TypeKey = TypeKey {unKey :: (Either TypeRep TyCon)} deriving Eq
 
 data SerializationSettings = SerializationSettings {
-                               specializedInstances :: Map TypeKey (SerializationSettings -> SWrapper),
+                               specializedInstances :: Map TypeKey SWrapper,
                                settingsVID :: VersionID
                              }
 
@@ -71,16 +71,24 @@ assertType _ x = x
 assertType1 :: f a -> f b -> f b
 assertType1 _ x = x
 
-sWrapper :: (Serializable a, Data a) => a -> (TypeKey, SerializationSettings -> SWrapper)
-sWrapper x = (typeKey $ typeOf x, const $ SWrapper getSerializer $ serialVersionID x)
+sWrapper :: (Serializable a, Data a) => a -> [(TypeKey, SWrapper)]
+sWrapper x = [(typeKey $ typeOf  x , SWrapper getSerializer  $ serialVersionID x),
+              (typeKey $ typeOf [x], SWrapper listSerializer $ serialVersionID x)]
  where getSerializer :: Data b => b -> Serializer b
-       getSerializer y = if typeOf y == typeOf x
-                          then Serializer (toBytes . assertType x . fromJust . cast) 
-                                          (fromJust . cast . assertType x . fromBytes)
-                          else NoSerializer 
+       getSerializer y | typeOf y == typeOf x 
+                          = Serializer (toBytes . assertType x . fromJust . cast) 
+                                       (fromJust . cast . assertType x . fromBytes)
+                       | otherwise =  NoSerializer
+                       
+       listSerializer :: Data b => b -> Serializer b
+       listSerializer y | typeOf y == typeOf [x]
+                           = Serializer (listToBytes . assertType [x] . fromJust . cast) 
+                                        (fromJust . cast . assertType [x] . listFromBytes)
+                        | otherwise = NoSerializer
+       
                           
 
-sWrapper1 :: (Serializable1 f, Data (f a)) => f a -> (TypeKey, SerializationSettings -> SWrapper)
+{-- sWrapper1 :: (Serializable1 f, Data (f a)) => f a -> (TypeKey, SerializationSettings -> SWrapper)
 sWrapper1 x = (typeKey1 $ typeOf1 x, \s -> SWrapper (getSerializer s) $ serialVersionID1 x)
  where getSerializer :: Data b => SerializationSettings -> b -> Serializer b
        getSerializer set y = if typeRepTyCon (typeOf y) == typeRepTyCon (typeOf1 x)
@@ -88,18 +96,20 @@ sWrapper1 x = (typeKey1 $ typeOf1 x, \s -> SWrapper (getSerializer s) $ serialVe
                               else NoSerializer
        makeS :: (Data b, Data c) => (c -> [Byte], [Byte] -> c) -> Serializer b
        makeS (to, from) = Serializer (toBytes1 to . assertType1 x . fromJust . cast)
-                                     (fromJust . cast . assertType1 x . fromBytes1 from)
+                                     (fromJust . cast . assertType1 x . fromBytes1 from) --}
                           
 specializedSerializer :: (Data a) => SerializationSettings -> a -> Serializer a
 specializedSerializer set x = findMatch $ specializedInstances set
- where findMatch map = case M.lookup (typeKey1 $ typeOf x) map of
+ where findMatch map = {-- case M.lookup (typeKey1 $ typeOf x) map of
                         Just f  -> let (SWrapper s _) = f set in s x
-                        Nothing -> case M.lookup (typeKey $ typeOf x) map of
-                                    Just f  -> let (SWrapper s _) = f set in s x
-                                    Nothing -> NoSerializer
+                        Nothing -> --}
+                       case M.lookup (typeKey $ typeOf x) map of
+                        Just (SWrapper s _) -> s x
+                        Nothing -> NoSerializer
                                                                          
-standardSpecializations :: [(TypeKey, SerializationSettings -> SWrapper)]
-standardSpecializations = [
+standardSpecializations :: [(TypeKey, SWrapper)]
+standardSpecializations = concat 
+                           [
                              sWrapper (u :: Int),
                              sWrapper (u :: Integer),
                              sWrapper (u :: ByteString),
@@ -109,7 +119,8 @@ standardSpecializations = [
                              sWrapper (u :: Word),
                              sWrapper (u :: Byte),
                              sWrapper (u :: Float),
-                             sWrapper (u :: Double)
+                             sWrapper (u :: Double),
+                             sWrapper (u :: Bool)
                              --sWrapper1 [()]
                              {--sWrapper1 (u :: Serializable a => Maybe a),
                              sWrapper2 (u :: (Serializable i, Serializable a) => Array i a),
@@ -118,7 +129,7 @@ standardSpecializations = [
                              sWrapper2 (u :: (Serializable a, Serializable b) => Either a b),
                              sWrapper2 (u :: (Serializable a, Serializable b) => (a,b)),
                              sWrapper3 (u :: (Serializable i, Serializable a) => STArray s i a)--}
-                          ]
+                           ]
  where u = undefined
  
 
@@ -130,8 +141,10 @@ defaultSettings = SerializationSettings {
                                         }
 
 addSerializableSpecialization :: (Serializable a, Data a) => a -> SerializationSettings -> SerializationSettings
-addSerializableSpecialization x set = set {specializedInstances = uncurry M.insert (sWrapper x) 
-                                                                    $ specializedInstances set,
+addSerializableSpecialization x set = set {specializedInstances = 
+                                            foldr (\(k,v) map -> M.insert k v map) 
+                                                  (specializedInstances set)
+                                                  (sWrapper x),                                                                    
                                            settingsVID = combineVIDs [serialVersionID x, 
                                                                       typeVID x,
                                                                       settingsVID set]}
