@@ -70,14 +70,15 @@ genericToBytes s d = do ps <- newPtrSet
  where serializeRefMap :: RefMap -> [Byte]
        serializeRefMap = concatWithLengths . map (\(k,bs) -> varbytes k ++ bs) . M.toList
 
+-- TODO: remove PtrSet from result
 genericToBytes' :: (Data a) => SerializationSettings -> a -> (PtrSet, RefMap) -> IO (PtrKey, PtrSet, RefMap)
 genericToBytes' set d (ps, rm) = do memb <- ptrSetMember d ps
                                     case memb of
                                      Just k  -> return (k, ps, rm)
                                      Nothing -> do (bs, ps', rm') <- use (specializedSerializer set d)
-                                                   (ps'', k) <- ptrSetAdd' d ps'
+                                                   k <- ptrSetAdd d ps'
                                                    let rm'' = M.insert k bs rm'
-                                                   return (k, ps'', rm'')
+                                                   return (k, ps', rm'')
  
  where use s = case s of
                 Serializer to _ -> return (to d, ps, rm)

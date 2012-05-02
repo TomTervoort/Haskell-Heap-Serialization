@@ -1,5 +1,5 @@
 {-# LANGUAGE RankNTypes, ExistentialQuantification, MagicHash, DeriveDataTypeable #-}
-module Data.Serialization.Internal.PtrSet (PtrSet, PtrKey, newPtrSet, ptrSetAdd, ptrSetAdd', ptrSetMember) where
+module Data.Serialization.Internal.PtrSet (PtrSet, PtrKey, newPtrSet, ptrSetAdd, ptrSetMember) where
 
 import Data.List
 import System.IO
@@ -18,6 +18,11 @@ import Data.IORef
 import Data.Array (Ix)
 import Data.Hashable
 
+import System.Mem.StableName
+import Data.HashTable (HashTable)
+import qualified Data.HashTable as HT
+import Data.Dynamic
+
 import Foreign.StablePtr
 import System.Mem.Weak
 
@@ -35,7 +40,10 @@ data GCCheckPoint = forall a. GCCheckPoint (Weak a)
 
 ----------------------
 
-data PtrSet = PtrSet [SBoxPtr]
+data PtrSet = PtrSet {table   :: HashTable SomeStableName PtrKey,
+                      nextKey :: IORef PtrKey}
+
+data SomeStableName = forall a. SomeStableName TypeRep (StableName a)
 
 type PtrKey = Int
 
@@ -73,18 +81,28 @@ stablePtrCompare x b@(SBoxPtr sp) = do cp <- gcCheckPoint
                      
 -----------------------
 
+someSname :: Typeable a => StableName a -> SomeStableName
+someSname n = SomeStableName (typeOf $ inner n) n
+ where inner = undefined :: StableName a -> a
+
 newPtrSet :: IO PtrSet
-newPtrSet = return $ PtrSet []
+newPtrSet = do table <- HT.new eq hasher
+               key <- newIORef 0
+               return $ PtrSet table key
+ where eq (SomeStableName t1 s1) (SomeStableName t2 s2)
+             | t1 == t2 = unsafeCoerce s1 == s2
+             | otherwise = False
+       hasher (SomeStableName _ s) = HT.hashInt $ hashStableName s
 
-ptrSetAdd :: Typeable a => a -> PtrSet -> IO PtrSet
-ptrSetAdd x s = fmap fst $ ptrSetAdd' x s
+ptrSetAdd :: Typeable a => a -> PtrSet -> IO PtrKey
+ptrSetAdd x ps = do sname <- makeStableName x
+                    key <- readIORef $ nextKey ps
+                    HT.insert (table ps) (someSname sname) key
+                    writeIORef (nextKey ps) (key + 1)
+                    return key
 
-ptrSetAdd' :: Typeable a => a -> PtrSet -> IO (PtrSet, PtrKey)
-ptrSetAdd' x (PtrSet ps) = do sp <- newStablePtr $ toDyn $ PtrBox x
-                              return (PtrSet $ ps ++ [SBoxPtr sp], length ps)
 
 ptrSetMember :: Typeable a => a -> PtrSet -> IO (Maybe PtrKey)
-ptrSetMember x (PtrSet ps) = do cmp <- forM ps (stablePtrCompare x)
-                                return $ findIndex id cmp
-
+ptrSetMember x ps = do sname <- makeStableName x
+                       HT.lookup (table ps) $ someSname sname
 
