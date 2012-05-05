@@ -34,8 +34,44 @@ import Data.Array.ST (STArray)
 
 import Debug.Trace
 
+--------------------------
+
+type ToByter m state = forall a. Data a => a -> state -> m ([Byte], state)
+type FromByter m state = forall a. Data a => [Byte] -> state -> m (a, state)
+
+class Data a => Serializable1 a where
+ toBytes1   :: Monad m => ToByter m s -> a -> s -> m ([Byte], s)
+ fromBytes1 :: Monad m => FromByter m s -> [Byte] -> s -> m (a, s)
+ serialVersionID1 :: a -> VersionID
+ 
+instance Data a => Serializable1 [a] where
+ serialVersionID1 _ = VersionID 1
+ toBytes1 _ [] s = return ([],s)
+ toBytes1 f (x:xs) s = do (bs, s') <- f x s
+                          (rest, s'') <- toBytes1 f xs s'
+                          let len = varbytes $ length bs
+                          return (len ++ bs ++ rest, s'')
+ fromBytes1 _ [] s = return ([], s)
+ fromBytes1 f bs s = do let (len, bs') = varunbytes bs
+                        let (curr, rest) = splitAt len bs'
+                        (x, s')   <- f curr s
+                        (xs, s'') <- fromBytes1 f rest s'
+                        return (x : xs, s'')
+ 
+instance Data a => Serializable1 (Maybe a) where
+ serialVersionID1 _ = VersionID 1
+ toBytes1 _ Nothing s  = return ([],s)
+ toBytes1 f (Just x) s = do (bs, s') <- f x s
+                            return (0 : bs, s')
+ fromBytes1 _ [] s = return (Nothing, s)
+ fromBytes1 f (_:xs) s = do (v, s') <- f xs s
+                            return (Just v, s')
+
+----------------------------
+
 data Serializer a = Serializer (a -> [Byte]) ([Byte] -> a)
-                  | Serializer1 (forall b. Data b => (b -> [Byte], [Byte] -> b) -> Serializer a)
+                  | forall m s. Serializer1 (ToByter m s -> a -> m ([Byte], s))
+                                            (FromByter m s -> [Byte] -> m (a, s))
                   | NoSerializer
 
 
@@ -88,15 +124,9 @@ sWrapper x = [(typeKey $ typeOf  x , SWrapper getSerializer  $ serialVersionID x
        
                           
 
-{-- sWrapper1 :: (Serializable1 f, Data (f a)) => f a -> (TypeKey, SerializationSettings -> SWrapper)
-sWrapper1 x = (typeKey1 $ typeOf1 x, \s -> SWrapper (getSerializer s) $ serialVersionID1 x)
- where getSerializer :: Data b => SerializationSettings -> b -> Serializer b
-       getSerializer set y = if typeRepTyCon (typeOf y) == typeRepTyCon (typeOf1 x)
-                              then Serializer1 makeS
-                              else NoSerializer
-       makeS :: (Data b, Data c) => (c -> [Byte], [Byte] -> c) -> Serializer b
-       makeS (to, from) = Serializer (toBytes1 to . assertType1 x . fromJust . cast)
-                                     (fromJust . cast . assertType1 x . fromBytes1 from) --}
+sWrapper1 :: Serializable1 (f a) => f a -> [(TypeKey, SWrapper)]
+sWrapper1 x = undefined --TODO
+                                     
                           
 specializedSerializer :: (Data a) => SerializationSettings -> a -> Serializer a
 specializedSerializer set x = findMatch $ specializedInstances set

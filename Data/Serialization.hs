@@ -2,18 +2,11 @@
 module Data.Serialization 
     (
       Serialized,
-      Serializable,
+      Serializable (..),
       VersionID (..),
       Byte,
-      toBytes,
-      fromBytes,
-      serialVersionID,
       sid,
       combineVIDs,
-      dependencies,
-      constBytesSize,
-      listToBytes,
-      listFromBytes,
       serialize,
       deserialize,
       LazyByteString,
@@ -25,8 +18,6 @@ module Data.Serialization
       store,
       load,
       loads,
-      
-      Serializable1 (..)
     ) where
 
 import Data.Serialization.Internal
@@ -333,39 +324,9 @@ instance Serializable Bool where
  listFromBytes (padding:xs) = drop (fromIntegral padding) $ lfb xs
   where lfb [] = []
         lfb (x:xs) = map (testBit x) (reverse [0..7]) ++ lfb xs
-
-
-------------------------------------------------------
-
-class Typeable1 f => Serializable1 f where
- toBytes1 :: (a -> [Byte]) -> f a -> [Byte]
- fromBytes1 :: ([Byte] -> a) -> [Byte] -> f a
- serialVersionID1 :: f a -> VersionID
- serialVersionID1 _ = ProgramUniqueVID
- dependencies1 :: Serializable a => f a -> [VersionID]
- dependencies1 _ = []
-
-instance (Serializable1 f, Serializable a) => Serializable (f a) where
- toBytes = toBytes1 toBytes
- fromBytes = fromBytes1 fromBytes
- serialVersionID = serialVersionID1
- dependencies fa = serialVersionID a : dependencies a ++ dependencies1 fa
-  where a = innerType fa
-        innerType = undefined :: f a -> a
-
-------------------------------------------------------
-
-instance Serializable1 [] where
- serialVersionID1 _ = VersionID 1
- toBytes1 = someListToBytes
- fromBytes1 = someListFromBytes
- 
-instance Serializable1 Maybe where
- serialVersionID1 _ = VersionID 1
- toBytes1 _ Nothing  = []
- toBytes1 f (Just x) = 0 : f x
- fromBytes1 _ [] = Nothing
- fromBytes1 f (_:xs) = Just $ f xs
- 
-
--- TODO: Serializable2
+        
+instance Serializable a => Serializable [a] where
+ serialVersionID _ = VersionID 1
+ toBytes = listToBytes
+ fromBytes = listFromBytes
+ dependencies xs = [sid $ head xs]

@@ -82,7 +82,7 @@ genericToBytes' set d (ps, rm) = do memb <- ptrSetMember d ps
  
  where use s = case s of
                 Serializer to _ -> return (to d, ps, rm)
-                Serializer1 f   -> undefined -- TODO
+                Serializer1 _ _ -> undefined -- TODO
                 NoSerializer    -> case dataTypeRep $ dataTypeOf d of
                                     AlgRep ctors -> do let fs = gmapQ (genericToBytes' set) d
                                                        ref <- newIORef (ps, rm)
