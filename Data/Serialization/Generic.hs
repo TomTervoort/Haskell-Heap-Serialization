@@ -64,39 +64,41 @@ concatWithLengths (x:xs) = varbytes (length x) ++ x ++ concatWithLengths xs
 
 genericToBytes :: (Data a) => SerializationSettings -> a -> IO [Byte]
 genericToBytes s d = do ps <- newPtrSet
-                        (key, _, rm) <- genericToBytes' s d (ps, M.empty)
+                        (key, rm) <- genericToBytes' s d (ps, M.empty)
                         return $ varbytes key ++ serializeRefMap rm
 
  where serializeRefMap :: RefMap -> [Byte]
        serializeRefMap = concatWithLengths . map (\(k,bs) -> varbytes k ++ bs) . M.toList
 
--- TODO: remove PtrSet from result
-genericToBytes' :: (Data a) => SerializationSettings -> a -> (PtrSet, RefMap) -> IO (PtrKey, PtrSet, RefMap)
+genericToBytes' :: (Data a) => SerializationSettings -> a -> (PtrSet, RefMap) -> IO (PtrKey, RefMap)
 genericToBytes' set d (ps, rm) = do memb <- ptrSetMember d ps
                                     case memb of
-                                     Just k  -> return (k, ps, rm)
-                                     Nothing -> do (bs, ps', rm') <- use (specializedSerializer set d)
-                                                   k <- ptrSetAdd d ps'
+                                     Just k  -> return (k, rm)
+                                     Nothing -> do (bs, rm') <- use (specializedSerializer set d)
+                                                   k <- ptrSetAdd d ps
                                                    let rm'' = M.insert k bs rm'
-                                                   return (k, ps', rm'')
+                                                   return (k, rm'')
  
  where use s = case s of
-                Serializer to _ -> return (to d, ps, rm)
-                Serializer1 _ _ -> undefined -- TODO
+                Serializer to _ -> return (to d, rm)
                 NoSerializer    -> case dataTypeRep $ dataTypeOf d of
-                                    AlgRep ctors -> do let fs = gmapQ (genericToBytes' set) d
-                                                       ref <- newIORef (ps, rm)
+                                    AlgRep ctors -> do let fs = gmapQ (\d rm -> genericToBytes' set d (ps, rm)) d
+                                                       ref <- newIORef rm
                                                        xs <- forM fs
-                                                               (\f -> do tup <- readIORef ref
-                                                                         (k, ps', rm') <- f tup
-                                                                         writeIORef ref (ps', rm')
+                                                               (\f -> do (k, rm') <- readIORef ref >>= f
+                                                                         writeIORef ref rm'
                                                                          return $ varbytes k)
-                                                       (ps', rm') <- readIORef ref
+                                                       rm' <- readIORef ref
                                                        let ctorRep | shorter ctors 2 = []
                                                                    | otherwise = varbytes (constrIndex $ toConstr d)
-                                                       return (ctorRep ++ concat xs, ps', rm')
+                                                       return (ctorRep ++ concat xs, rm')
                                     _ -> error $ "A specialized serializer is required for type " 
                                                     ++ dataTypeName (dataTypeOf d)
+                Serializer1 to1 _ -> to1 toByter d rm
+                                       
+       toByter :: ToByter IO RefMap
+       toByter d rm = do (key, rm') <- genericToBytes' set d (ps, rm)
+                         return (varbytes key, rm')
 
 
 data Unfolder r = Unfolder ([Byte], DeRefMap) r              
@@ -130,8 +132,10 @@ genericFromBytes' set bs drm = result
                                              then (x, dm)
                                              else error $ "Not all bytes are consumed when deserializing as "
                                                             ++ dataTypeName dtype ++ "."
-                 _                 -> error $ "A specialized serializer for " ++ dataTypeName dtype
-                                               ++ " is required."
+                                       _                 -> error $ "A specialized serializer for " ++ dataTypeName dtype
+                                                                      ++ " is required."
+                 Serializer1 _ _ -> undefined --TODO
+                 
        dtype = dataTypeOf $ fst result
        
        unfolder :: Data b => Unfolder (b -> r) -> Unfolder r

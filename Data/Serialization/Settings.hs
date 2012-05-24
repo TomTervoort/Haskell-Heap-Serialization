@@ -70,8 +70,8 @@ instance Data a => Serializable1 (Maybe a) where
 ----------------------------
 
 data Serializer a = Serializer (a -> [Byte]) ([Byte] -> a)
-                  | forall m s. Serializer1 (ToByter m s -> a -> m ([Byte], s))
-                                            (FromByter m s -> [Byte] -> m (a, s))
+                  | Serializer1 (forall m s. Monad m => ToByter m s -> a -> s -> m ([Byte], s))
+                                (forall m s. Monad m => FromByter m s -> [Byte] -> s -> m (a, s))
                   | NoSerializer
 
 
@@ -125,7 +125,10 @@ sWrapper x = [(typeKey $ typeOf  x , SWrapper getSerializer  $ serialVersionID x
                           
 
 sWrapper1 :: Serializable1 (f a) => f a -> [(TypeKey, SWrapper)]
-sWrapper1 x = undefined --TODO
+sWrapper1 x = [(key, SWrapper getSerializer  $ serialVersionID1 x)]
+ where key = typeKey1 $ typeOf x
+       getSerializer :: Data b => b -> Serializer b
+       getSerializer = undefined --TODO
                                      
                           
 specializedSerializer :: (Data a) => SerializationSettings -> a -> Serializer a

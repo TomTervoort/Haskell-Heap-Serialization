@@ -31,14 +31,14 @@ import System.Time
 import Unsafe.Coerce
 import GHC.Exts
 
-------------------
+{------------------
 
 data PtrBox a = PtrBox a deriving Typeable
 data SBoxPtr = SBoxPtr (StablePtr Dynamic)
 
 data GCCheckPoint = forall a. GCCheckPoint (Weak a)
 
-----------------------
+----------------------}
 
 data PtrSet = PtrSet {table   :: HashTable SomeStableName PtrKey,
                       nextKey :: IORef PtrKey}
@@ -47,7 +47,7 @@ data SomeStableName = forall a. SomeStableName TypeRep (StableName a)
 
 type PtrKey = Int
 
--------------------------
+{-------------------------
 
 gcCheckPoint :: IO GCCheckPoint
 gcCheckPoint = do key <- generateTemporaryPtr
@@ -79,7 +79,7 @@ stablePtrCompare x b@(SBoxPtr sp) = do cp <- gcCheckPoint
                                                 then stablePtrCompare x b
                                                 else return eq
                      
------------------------
+-----------------------}
 
 someSname :: Typeable a => StableName a -> SomeStableName
 someSname n = SomeStableName (typeOf $ inner n) n
