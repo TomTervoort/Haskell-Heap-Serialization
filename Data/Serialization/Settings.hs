@@ -104,9 +104,6 @@ typeKey1 = TypeKey . Right . typeRepTyCon
 assertType :: a -> a -> a
 assertType _ x = x
 
-assertType1 :: f a -> f b -> f b
-assertType1 _ x = x
-
 sWrapper :: (Serializable a, Data a) => a -> [(TypeKey, SWrapper)]
 sWrapper x = [(typeKey $ typeOf  x , SWrapper getSerializer  $ serialVersionID x),
               (typeKey $ typeOf [x], SWrapper listSerializer $ serialVersionID x)]
@@ -128,8 +125,15 @@ sWrapper1 :: Serializable1 (f a) => f a -> [(TypeKey, SWrapper)]
 sWrapper1 x = [(key, SWrapper getSerializer  $ serialVersionID1 x)]
  where key = typeKey1 $ typeOf x
        getSerializer :: Data b => b -> Serializer b
-       getSerializer = undefined --TODO
-                                     
+       getSerializer y | typeOf x == typeOf y = Serializer1 tob fromb
+                       | otherwise = NoSerializer
+
+       tob :: (Data b, Monad m) => ToByter m s -> b -> s -> m ([Byte], s)
+       tob tb y s = toBytes1 tb (assertType x $ fromJust $ cast y) s 
+       fromb :: (Data b, Monad m) => FromByter m s -> [Byte] -> s -> m (b, s)       
+       fromb fb bs s = do (y, s') <- fromBytes1 fb bs s
+                          return (fromJust $ cast $ assertType x y, s')
+                       
                           
 specializedSerializer :: (Data a) => SerializationSettings -> a -> Serializer a
 specializedSerializer set x = findMatch $ specializedInstances set
@@ -154,7 +158,7 @@ standardSpecializations = concat
                              sWrapper (u :: Float),
                              sWrapper (u :: Double),
                              sWrapper (u :: Bool)
-                             --sWrapper1 [()]
+                             -- sWrapper1 (Just [True])
                              {--sWrapper1 (u :: Serializable a => Maybe a),
                              sWrapper2 (u :: (Serializable i, Serializable a) => Array i a),
                              sWrapper2 (u :: (Serializable i, Serializable a) => IOArray i a),
