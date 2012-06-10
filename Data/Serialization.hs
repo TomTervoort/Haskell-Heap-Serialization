@@ -4,27 +4,40 @@
 -- | 
 -- [headers]
 --
--- 
+-- Contains an easily extensible 'Serializable' class that allows converting an object from and to 
+-- binary data. Versioning and dynamic typing are also handled, as well as writing to and reading 
+-- from files and such.
+--
+-- 'Data.Serialization.Generic' specifies generic versions of the serializer and deserializer that
+-- can be used for arbitrary data structures. It can be used in conjunction with custom 
+-- 'Serializable' instances if you want to manually introduce optimizations to the binary 
+-- representation of (a partial) structure.
+-------------------------------------
 
 module Data.Serialization 
     (
+      -- * Types
       Serialized,
-      Serializable (..),
-      VersionID (..),
-      Byte,
-      sid,
-      combineVIDs,
+      LazyByteString,
+      
+      -- * Serializable class
+      Serializable,
+      
+      -- * Serialization
       serialize,
       deserialize,
-      LazyByteString,
-      storeInByteString,
-      loadFromBytes,
-      hStore,
-      hLoad,
-      hLoads,
+      
+      -- * Storage of serialized objects
       store,
       load,
+      stores,
       loads,
+      hStore,
+      hStores,
+      hLoad,
+      hLoads,
+      storeInByteString,
+      loadFromByteString
     ) where
 
 import Data.Serialization.Internal
@@ -55,7 +68,7 @@ import Data.Array.IArray
 
 -----------------
 
--- | Type definition that is useful to distinguish lazy from regular ByteStrings.
+-- | Type definition that is useful to distinguish lazy from regular 'ByteString's.
 type LazyByteString = BL.ByteString
  
 -----------------
@@ -68,58 +81,8 @@ typeID = show . typeOf
 libraryVersion :: String
 libraryVersion = "serihask001"
 
--- | A Byte is a Word8.
-type Byte = Word8
-
 -----------------
-                            
-combineVIDs :: [VersionID] -> VersionID
-combineVIDs vids = VersionID $ checksumInt $ concatMap bytes $ map (\(VersionID i) -> i) vids
-                   -- ProgramUniqueVID `elem` vids = ProgramUniqueVID
-
-------------------
-
-someListToBytes :: (a -> [Byte]) -> [a] -> [Byte]
-someListToBytes _ [] = []
-someListToBytes f (x:xs) = let bx = f x 
-                            in concat [varbytes $ length bx, bx, someListToBytes f xs]
-                            
-someListFromBytes :: ([Byte] -> a) -> [Byte] -> [a]
-someListFromBytes _ [] = []
-someListFromBytes f str = let (len, str1)  = varunbytes str
-                              (str2, rest) = splitAt len str1
-                           in f str2 : someListFromBytes f rest
-
------------------
-
-class Typeable a => Serializable a where
- toBytes   :: a -> [Byte]
- fromBytes :: [Byte] -> a
- 
- serialVersionID :: a -> VersionID
- dependencies :: a -> [VersionID]
- dependencies _ = []
- 
- constBytesSize :: a -> Maybe Int
- constBytesSize _ = Nothing
- 
- listToBytes :: [a] -> [Byte]
- listToBytes l | isJust $ constBytesSize $ head l = concatMap toBytes l
-               | otherwise = someListToBytes toBytes l
- listFromBytes :: [Byte] -> [a]
- listFromBytes l = case constBytesSize $ head defaultresult of
-                    Nothing -> defaultresult
-                    Just n  -> chunks n l
-  where defaultresult = someListFromBytes fromBytes l
-        chunks _ [] = []
-        chunks n xs = case splitAt n xs of
-                       (c, rest) -> fromBytes c : chunks n rest
- 
-------------------------------------------
-
--- | Shorthand for serialVersionID.
-sid :: Serializable a => a -> VersionID
-sid = serialVersionID 
+                           
 
 completeID :: Serializable a => a -> VersionID
 completeID x = combineVIDs $ serialVersionID x : dependencies x
@@ -157,24 +120,24 @@ storeInByteString obj = do -- pid <- programVersionID
                                      ]
                             
 -- TODO: throw proper exception on failure
-loadFromBytes :: LazyByteString -> IO (Serialized, LazyByteString)
-loadFromBytes str = do let str0 = BL.unpack str
-                       let (lid, str1) = splitAt (length libraryVersion) str0
-                       let (vid, str2) = splitAt 9 str1
-                       let (tid, str3) = (takeWhile (/= 0) str2, drop (length tid + 1) str2)
-                       let (len, str4) = varunbytes str3
-                       let (dat, str5) = splitAt len str4
+loadFromByteString :: LazyByteString -> IO (Serialized, LazyByteString)
+loadFromByteString str = do let str0 = BL.unpack str
+                            let (lid, str1) = splitAt (length libraryVersion) str0
+                            let (vid, str2) = splitAt 9 str1
+                            let (tid, str3) = (takeWhile (/= 0) str2, drop (length tid + 1) str2)
+                            let (len, str4) = varunbytes str3
+                            let (dat, str5) = splitAt len str4
                             
-                       when (asciiString lid /= libraryVersion) $ error "Object was not serialized with the current version of the library."
-                       {-- pvid <- case vid of
-                                (0:id) -> return $ VersionID $ unbytes id
-                                (1:id) -> do pid <- programVersionID
-                                             when (pid /= unbytes id) $ error "Object was not serialized with the current build of this application."
-                                             return ProgramUniqueVID
-                                _      -> error "Invalid data" --}
-                       let pvid = VersionID $ unbytes vid
-                            
-                       return (Serialized (asciiString tid) pvid (B.pack dat), BL.pack str5)
+                            when (asciiString lid /= libraryVersion) $ error "Object was not serialized with the current version of the library."
+                            {-- pvid <- case vid of
+                                     (0:id) -> return $ VersionID $ unbytes id
+                                     (1:id) -> do pid <- programVersionID
+                                                  when (pid /= unbytes id) $ error "Object was not serialized with the current build of this application."
+                                                  return ProgramUniqueVID
+                                     _      -> error "Invalid data" --}
+                            let pvid = VersionID $ unbytes vid
+                                 
+                            return (Serialized (asciiString tid) pvid (B.pack dat), BL.pack str5)
                        
  where asciiString :: [Word8] -> String
        asciiString = map $ chr . fromIntegral
@@ -183,10 +146,13 @@ loadFromBytes str = do let str0 = BL.unpack str
 hStore :: Handle -> Serialized -> IO ()
 hStore h ob = storeInByteString ob >>= BL.hPutStr h
 
+hStores :: Handle -> [Serialized] -> IO ()
+hStores h obs = forM_ obs $ hStore h
+
 hLoads :: Handle -> IO [Serialized]
 hLoads h = BL.hGetContents h >>= loadContent
  where loadContent str | BL.null str = return []
-                       | otherwise   = do (x, rest) <- loadFromBytes str
+                       | otherwise   = do (x, rest) <- loadFromByteString str
                                           xs <- loadContent rest
                                           return (x:xs)
                                           
@@ -202,8 +168,7 @@ store :: FilePath -> Serialized -> IO ()
 store path ob = withBinaryFile path WriteMode $ flip hStore ob
 
 stores :: FilePath -> [Serialized] -> IO ()
-stores path obs = withBinaryFile path WriteMode 
-                    $ \h -> mapM_ (hStore h) obs
+stores path obs = withBinaryFile path WriteMode $ \h -> hStores h obs
 
 load :: FilePath -> IO Serialized
 load path = withBinaryFile path ReadMode hLoad
@@ -337,3 +302,13 @@ instance Serializable a => Serializable [a] where
  toBytes = listToBytes
  fromBytes = listFromBytes
  dependencies xs = [sid $ head xs]
+ 
+instance Serializable a => Serializable (Maybe a) where
+ serialVersionID _ = VersionID 1
+ toBytes Nothing = []
+ toBytes (Just x) | constBytesSize x > Just 0 = toBytes x
+                  | otherwise = 0 : toBytes x
+ fromBytes [] = Nothing
+ fromBytes xs = result
+  where result | constBytesSize result > Just 0 = fromBytes xs
+               | otherwise = fromBytes $ tail xs

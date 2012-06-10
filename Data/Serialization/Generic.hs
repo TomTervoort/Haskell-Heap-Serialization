@@ -4,14 +4,17 @@ module Data.Serialization.Generic (
                                      serializeWith,
                                      serialize,
                                      deserializeWith,
-                                     deserialize
+                                     deserialize,
+                                     SerializationSettings,
+                                     defaultSettings,
+                                     addSerializableSpecialization,
+                                     addSerSpec
                                   ) where
 
 import Data.Serialization hiding (serialize, deserialize)
-import Data.Serialization.Settings
 import Data.Serialization.Internal
+import Data.Serialization.Internal.Settings
 import Data.Serialization.Internal.IntegralBytes 
-import Data.Serialization.Internal.ProgramVersionID
 import Data.Serialization.Internal.PtrSet
 
 import Data.List
@@ -168,6 +171,7 @@ genericVersionID set x = combineVIDs $ [settingsVID set, structureID S.empty $ d
                                                     CharRep      -> [3]
                                                     NoRep        -> [4]
         where dname = dataTypeName $ dataTypeOf x
+        
        ctorID :: Data a => a -> Set String -> Constr -> [Byte]
        ctorID x set c = 
             concatMap (bytes . ord) (concat $ intersperse "\0" $ showConstr c : constrFields c)

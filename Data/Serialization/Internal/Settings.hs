@@ -1,9 +1,9 @@
 {-# LANGUAGE ExistentialQuantification, RankNTypes, DeriveDataTypeable, FlexibleInstances, FlexibleContexts, UndecidableInstances, CPP #-}
-module Data.Serialization.Settings where
+module Data.Serialization.Internal.Settings where
 
 import Data.Serialization
+import Data.Serialization.Internal
 import Data.Serialization.Internal.IntegralBytes
-import Data.Serialization.Internal.ProgramVersionID
 
 import Data.List
 import System.IO
@@ -79,6 +79,7 @@ data SWrapper = SWrapper (Generic Serializer) VersionID
 
 data TypeKey = TypeKey {unKey :: (Either TypeRep TyCon)} deriving Eq
 
+-- | ...
 data SerializationSettings = SerializationSettings {
                                specializedInstances :: Map TypeKey SWrapper,
                                settingsVID :: VersionID
