@@ -1,4 +1,11 @@
 {-# LANGUAGE FlexibleInstances, DeriveDataTypeable, TypeSynonymInstances, OverlappingInstances, RankNTypes #-}
+
+-------------------------------------
+-- | 
+-- [headers]
+--
+-- 
+
 module Data.Serialization 
     (
       Serialized,
@@ -22,7 +29,7 @@ module Data.Serialization
 
 import Data.Serialization.Internal
 import Data.Serialization.Internal.IntegralBytes
-import Data.Serialization.Internal.ProgramVersionID
+--import Data.Serialization.Internal.ProgramVersionID
 
 import Data.List
 import System.IO
@@ -67,9 +74,8 @@ type Byte = Word8
 -----------------
                             
 combineVIDs :: [VersionID] -> VersionID
-combineVIDs vids | ProgramUniqueVID `elem` vids = ProgramUniqueVID
-                 | otherwise =  VersionID $ checksumInt $ concatMap bytes 
-                                          $ map (\(VersionID i) -> i) vids
+combineVIDs vids = VersionID $ checksumInt $ concatMap bytes $ map (\(VersionID i) -> i) vids
+                   -- ProgramUniqueVID `elem` vids = ProgramUniqueVID
 
 ------------------
 
@@ -91,7 +97,6 @@ class Typeable a => Serializable a where
  fromBytes :: [Byte] -> a
  
  serialVersionID :: a -> VersionID
- serialVersionID _ = ProgramUniqueVID
  dependencies :: a -> [VersionID]
  dependencies _ = []
  
@@ -133,11 +138,11 @@ deserialize (Serialized tid sv dp) | tid /= typeID result = Nothing
 -----------------
 
 storeInByteString :: Serialized -> IO LazyByteString
-storeInByteString obj = do pid <- programVersionID
+storeInByteString obj = do -- pid <- programVersionID
                            -- Prepend version identifier with 0 if manual or 1 if generated
                            let vid = B.pack $ case serializerVersion obj of
-                                               VersionID id -> 0 : bytes (fromIntegral id :: Word64)
-                                               ProgramUniqueVID -> 1 : bytes pid
+                                               VersionID id -> bytes (fromIntegral id :: Word64)
+                                               -- ProgramUniqueVID -> 1 : bytes pid
                            let tid = BS.pack $ dataType obj ++ "\0"
                            let pdata = dataPacket obj
                            let datalen = B.pack $ varbytes $ B.length pdata
@@ -161,14 +166,16 @@ loadFromBytes str = do let str0 = BL.unpack str
                        let (dat, str5) = splitAt len str4
                             
                        when (asciiString lid /= libraryVersion) $ error "Object was not serialized with the current version of the library."
-                       pvid <- case vid of
+                       {-- pvid <- case vid of
                                 (0:id) -> return $ VersionID $ unbytes id
                                 (1:id) -> do pid <- programVersionID
                                              when (pid /= unbytes id) $ error "Object was not serialized with the current build of this application."
                                              return ProgramUniqueVID
-                                _      -> error "Invalid data"
+                                _      -> error "Invalid data" --}
+                       let pvid = VersionID $ unbytes vid
                             
                        return (Serialized (asciiString tid) pvid (B.pack dat), BL.pack str5)
+                       
  where asciiString :: [Word8] -> String
        asciiString = map $ chr . fromIntegral
                             

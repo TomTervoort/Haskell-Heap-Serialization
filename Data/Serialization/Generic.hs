@@ -156,19 +156,20 @@ genericTest x = genericToBytes defaultSettings x >>= genericFromBytes defaultSet
 genericVersionID :: (Data a) => SerializationSettings -> a -> VersionID
 genericVersionID set x = combineVIDs $ [settingsVID set, structureID S.empty $ dataTypeOf x] 
 -- Take checksum over characters in data type name and constructor kinds.
- where structureID :: Set String -> DataType -> VersionID
-       structureID set d | S.member (dataTypeName d) set  = VersionID 0
-                         | otherwise = let newset = S.insert (dataTypeName d) set
+ where structureID :: Data a => Set String -> a -> VersionID
+       structureID set x | S.member dname set  = VersionID 0
+                         | otherwise = let newset = S.insert dname set
                                         in VersionID . checksumInt
-                                            $  concatMap (bytes . ord) (dataTypeName d)
-                                            ++ 0 : case dataTypeRep d of
-                                                    AlgRep ctors -> 0 : concatMap (ctorID newset) ctors
+                                            $  concatMap (bytes . ord) dname
+                                            ++ 0 : case dataTypeRep $ dataTypeOf x of
+                                                    AlgRep ctors -> trace (show ctors) $ 0 : concatMap (ctorID x newset) ctors
                                                     IntRep       -> [1]
                                                     FloatRep     -> [2]
                                                     CharRep      -> [3]
                                                     NoRep        -> [4]
-       ctorID :: Set String -> Constr -> [Byte]
-       ctorID set c = 
+        where dname = dataTypeName $ dataTypeOf x
+       ctorID :: Data a => a -> Set String -> Constr -> [Byte]
+       ctorID x set c = 
             concatMap (bytes . ord) (concat $ intersperse "\0" $ showConstr c : constrFields c)
              ++ [0, if constrFixity c == Prefix then 1 else 2] 
              ++ concatMap (\(VersionID x) -> bytes x) (gmapQ (structureID set . dataTypeOf) 
