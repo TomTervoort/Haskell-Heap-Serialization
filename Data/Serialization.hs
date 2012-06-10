@@ -1,4 +1,5 @@
-{-# LANGUAGE FlexibleInstances, DeriveDataTypeable, TypeSynonymInstances, OverlappingInstances, RankNTypes #-}
+{-# LANGUAGE FlexibleInstances, DeriveDataTypeable, TypeSynonymInstances, OverlappingInstances, 
+             RankNTypes, ScopedTypeVariables #-}
 
 -------------------------------------
 -- | 
@@ -19,6 +20,7 @@ module Data.Serialization
       -- * Types
       Serialized,
       LazyByteString,
+      SerializationException (..),
       
       -- * Serializable class
       Serializable,
@@ -27,7 +29,7 @@ module Data.Serialization
       serialize,
       deserialize,
       
-      -- * Storage of serialized objects
+      -- * Storage and retrieval of serialized objects
       store,
       load,
       stores,
@@ -44,12 +46,14 @@ import Data.Serialization.Internal
 import Data.Serialization.Internal.IntegralBytes
 --import Data.Serialization.Internal.ProgramVersionID
 
+import Prelude hiding (catch)
 import Data.List
 import System.IO
 import Control.Monad
 import Data.List
 import Data.Maybe
 import Data.Char
+import Control.Exception
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
@@ -68,8 +72,36 @@ import Data.Array.IArray
 
 -----------------
 
--- | Type definition that is useful to distinguish lazy from regular 'ByteString's.
+-- | Type definition that is useful to distinguish lazy from regular @ByteString@s.
 type LazyByteString = BL.ByteString
+
+
+----------------------
+
+-- | Is thrown by the deserialization functions in case something goes wrong.
+data SerializationException = IncompatibleLibraries
+                                -- ^If an object has been serialized with another version of this 
+                                -- library.
+                            | IncompatibleSerializers
+                                -- ^In case a different version of the serializer for a particular
+                                -- object was used.
+                            | InvalidSerializedData
+                                -- ^When the data read from a file or such does not conform to the
+                                -- protocol.
+                            | DeserializationError String --TODO: utilise this
+                                -- ^When deserializing, an exception was thrown by the instance of 
+                                -- @Serializable. Contains a description.
+                            deriving (Eq, Typeable)
+                            
+instance Show SerializationException where
+ show ex = case ex of
+            IncompatibleLibraries     -> "This object appears to have been serialized with a " 
+                                        ++ "different version of this library."
+            IncompatibleSerializers   -> "Incompatible serializers used."
+            InvalidSerializedData     -> "Data does not conform to protocol."
+            DeserializationError str  -> "Deserialization error: '" ++ str ++ "'"
+            
+instance Exception SerializationException
  
 -----------------
 
@@ -77,29 +109,41 @@ type LazyByteString = BL.ByteString
 typeID :: Typeable a => a -> TypeID
 typeID = show . typeOf
 
--- Current version of the serialization library.
+-- Current version of the serialization library. This String is included in serialized packages.
 libraryVersion :: String
 libraryVersion = "serihask001"
 
 -----------------
                            
-
+-- Create a version identifier for the serializer of a type and all its dependencies.
 completeID :: Serializable a => a -> VersionID
 completeID x = combineVIDs $ serialVersionID x : dependencies x
  
-serialize :: Serializable a => a -> Serialized
-serialize x = Serialized {dataType = typeID x, 
-                          serializerVersion = completeID x, 
-                          dataPacket = B.pack $ toBytes x}
+-- | Encode a 'Serializable' object into a binary representation that also contains type and 
+-- version info. The resulting object can then be written to a file or stream using the storage
+-- functions.
+serialize :: Serializable a => a -> IO Serialized
+-- IO monad is redundant but is more consistant with deserializer and generic serializer.
+serialize x = return Serialized {dataType = typeID x, 
+                                 serializerVersion = completeID x, 
+                                 dataPacket = B.pack $ toBytes x}
 
-deserialize :: Serializable a => Serialized -> Maybe a
-deserialize (Serialized tid sv dp) | tid /= typeID result = Nothing
-                                   | sv /= completeID result = error "Version of serializer used for this object does not match the current one."
-                                   | otherwise = Just result
+-- | Decodes a @Serialized@ object back into a Haskell structure. In order to assert the type is
+-- correct, @Nothing@ is returned when the inferred type is not correct. This works similarly as
+-- 'Data.Typeable.cast'.
+--
+-- When a version incompatibility or other error occurs, a @SerializationException@ is thrown.
+deserialize :: Serializable a => Serialized -> IO (Maybe a)
+deserialize (Serialized tid sv dp) | tid /= typeID result = return Nothing
+                                   | sv /= completeID result = throwIO IncompatibleSerializers
+                                   | otherwise = catches (return $ Just result) exHandlers
  where result = fromBytes $ B.unpack dp
+       exHandlers = [Handler $ \(e :: SerializationException) -> throw e,
+                     Handler $ \(e :: SomeException) -> throw (DeserializationError $ show e)]
 
 -----------------
 
+-- | Store the binary representation of a serialized object in a @LazyByteString@.
 storeInByteString :: Serialized -> IO LazyByteString
 storeInByteString obj = do -- pid <- programVersionID
                            -- Prepend version identifier with 0 if manual or 1 if generated
@@ -119,16 +163,23 @@ storeInByteString obj = do -- pid <- programVersionID
                                       pdata    -- Actual data of serialized object
                                      ]
                             
--- TODO: throw proper exception on failure
+
+-- | Reads a serialized object from the beginning of a lazy bytestring. Returns it along with the 
+-- rest of the string. Throws a @SerializationException@ when an error occurs.
 loadFromByteString :: LazyByteString -> IO (Serialized, LazyByteString)
 loadFromByteString str = do let str0 = BL.unpack str
                             let (lid, str1) = splitAt (length libraryVersion) str0
                             let (vid, str2) = splitAt 9 str1
-                            let (tid, str3) = (takeWhile (/= 0) str2, drop (length tid + 1) str2)
+                            let (tid, str3) = (takeWhile (/= 0) str2, drop (length tid + 1) str2)                            
                             let (len, str4) = varunbytes str3
                             let (dat, str5) = splitAt len str4
                             
-                            when (asciiString lid /= libraryVersion) $ error "Object was not serialized with the current version of the library."
+                            -- Assert str3 is not empty.
+                            when (null str3) $ throw InvalidSerializedData
+                            
+                            -- Check library versions.
+                            when (asciiString lid /= libraryVersion) $ throw IncompatibleLibraries
+                            
                             {-- pvid <- case vid of
                                      (0:id) -> return $ VersionID $ unbytes id
                                      (1:id) -> do pid <- programVersionID
@@ -143,12 +194,16 @@ loadFromByteString str = do let str0 = BL.unpack str
        asciiString = map $ chr . fromIntegral
                             
 
+-- | Writes a serialized object to a handle.
 hStore :: Handle -> Serialized -> IO ()
 hStore h ob = storeInByteString ob >>= BL.hPutStr h
 
+-- | Writes multiple serialized objects to a handle.
 hStores :: Handle -> [Serialized] -> IO ()
 hStores h obs = forM_ obs $ hStore h
 
+-- | Loads multiple serialized objects from a handle. Note: this handle may not contain any data
+-- besides these objects.
 hLoads :: Handle -> IO [Serialized]
 hLoads h = BL.hGetContents h >>= loadContent
  where loadContent str | BL.null str = return []
@@ -156,26 +211,31 @@ hLoads h = BL.hGetContents h >>= loadContent
                                           xs <- loadContent rest
                                           return (x:xs)
                                           
+-- | Loads a single serialized object from a handle. Note: this handle may not contain any data
+-- besides this objects.
 hLoad :: Handle -> IO Serialized
+-- TODO: only read neccessary part.
 hLoad h = do xs <- hLoads h
              case xs of
               []  -> error "Nothing to be read from handle."
               [x] -> return x
               _   -> error "Handle contains more data than a single serialized object."
                                            
-
+-- | Writes a serialized object to a file.
 store :: FilePath -> Serialized -> IO ()
 store path ob = withBinaryFile path WriteMode $ flip hStore ob
 
+-- | Writes multiple serialized objects to a file.
 stores :: FilePath -> [Serialized] -> IO ()
 stores path obs = withBinaryFile path WriteMode $ \h -> hStores h obs
 
+-- | Reads a serialized from a file.
 load :: FilePath -> IO Serialized
 load path = withBinaryFile path ReadMode hLoad
 
+-- | Reads multiple serialized objects from a file.
 loads :: FilePath -> IO [Serialized]
 loads path = withBinaryFile path ReadMode hLoads
-
 
 ----------------------
 
