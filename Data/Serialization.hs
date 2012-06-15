@@ -1,5 +1,4 @@
-{-# LANGUAGE FlexibleInstances, DeriveDataTypeable, TypeSynonymInstances, OverlappingInstances, 
-             RankNTypes, ScopedTypeVariables #-}
+{-# LANGUAGE FlexibleInstances, DeriveDataTypeable, OverlappingInstances, ScopedTypeVariables #-}
 
 -------------------------------------
 -- | 

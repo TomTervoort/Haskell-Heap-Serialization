@@ -71,8 +71,8 @@ type Byte = Word8
                               
 -- | Represents objects for which a specific serialization method has been defined. Instances exist
 -- for many standard types. If you want to serialize something of a different type, either use
--- the generic serializers from 'Data.Serialization.Generic' or make a custom instance of
--- 'Serializable' by importing 'Data.Serialization.Extent'.
+-- the generic serializers from @Data.Serialization.Generic@ or make a custom instance of
+-- 'Serializable' by importing @Data.Serialization.Extent@.
 class Typeable a => Serializable a where
  -- | Define an object's binary representation by converting it to a list of bytes. When 
  -- implementing this, you do not have to take version and type information in account as that is 

@@ -1,4 +1,4 @@
-{-# LANGUAGE ExistentialQuantification, RankNTypes, DeriveDataTypeable, FlexibleInstances, FlexibleContexts, UndecidableInstances, CPP #-}
+{-# LANGUAGE RankNTypes, DeriveDataTypeable, CPP #-}
 module Data.Serialization.Internal.Settings where
 
 import Data.Serialization
@@ -91,9 +91,6 @@ instance Ord TypeKey where
 #else
  compare = comparing $ either (Left . unsafePerformIO . typeRepKey) (Right . tyConString) . unKey
 #endif
-
-{-- instance Hashable TypeKey where
- hash = either (hash . unsafePerformIO . typeRepKey) (hash . tyConString) . unKey --}
 
 
 typeKey :: TypeRep -> TypeKey
