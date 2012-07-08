@@ -79,11 +79,19 @@ data SWrapper = SWrapper (Generic Serializer) VersionID
 
 data TypeKey = TypeKey {unKey :: (Either TypeRep TyCon)} deriving Eq
 
--- | ...
+-- | Holds the configurable settings for the serialization functions. 
+-- This contains all the types for which specialized serializers exist.
+--
+-- Note that when an object x has been serialized with @a :: SerializationSettings@, trying to 
+-- deserialize it with @b :: SerializationSettings@ where @a != b@ the possible incompatibility 
+-- will be noticed and an exception will be thrown.
 data SerializationSettings = SerializationSettings {
                                specializedInstances :: Map TypeKey SWrapper,
                                settingsVID :: VersionID
                              }
+                             
+instance Eq SerializationSettings where
+ a == b = settingsVID a == settingsVID b -- Determine equality based on version number.
 
 instance Ord TypeKey where
 #if __GLASGOW_HASKELL__ >= 700
@@ -168,13 +176,21 @@ standardSpecializations = concat
  where u = undefined
  
 
+emptySettings :: SerializationSettings
+emptySettings = SerializationSettings M.empty (VersionID 0)
 
+-- | The default serialization settings. Contains specializations for basic types such as Int and 
+-- Bool and most other types for which a 'Serializable'-instance is defined in 
+-- 'Data.Serialization.Extent'.
 defaultSettings :: SerializationSettings
 defaultSettings = SerializationSettings {
                                           specializedInstances = M.fromList standardSpecializations,
                                           settingsVID = VersionID 1
                                         }
 
+-- | Add a serialization specialization of some type for which a 'Serializable' instance exists and
+-- store it in the 'SerializationSettings'. Only the type of the first argument is relevant, and it
+-- might just as well be @undefined@.
 addSerializableSpecialization :: (Serializable a, Data a) => a -> SerializationSettings -> SerializationSettings
 addSerializableSpecialization x set = set {specializedInstances = 
                                             foldr (\(k,v) map -> M.insert k v map) 
@@ -185,6 +201,7 @@ addSerializableSpecialization x set = set {specializedInstances =
                                                                       settingsVID set]}
  where typeVID = VersionID . checksumInt . concatMap (bytes . ord) . show . typeOf
 
+-- | Shorthand for 'addSerializableSpecialization'.
 addSerSpec :: (Serializable a, Data a) => a -> SerializationSettings -> SerializationSettings
 addSerSpec = addSerializableSpecialization
 

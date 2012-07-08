@@ -1,12 +1,39 @@
 {-# LANGUAGE DeriveDataTypeable, RankNTypes, ExistentialQuantification #-}
+
+-------------------------------------
+-- | 
+-- [headers]
+--
+-- Defines generic serialization functions that require the type of objects that can serialized to 
+-- be an instance of @Data@, rather than 'Serializable'. The binary representation of objects 
+-- serialized this way will depend on the layout of their data structure.
+--
+-- If objects of certain types need to be serialized in a certain way because doing so based on 
+-- their layout is either not possible or less efficient, it is possible to manually make them an
+-- instance of 'Serializable' and notifying the generic serializer of this by adding that type as
+-- a so-called specialization.
+-- 
+-- Whenever a data structure contains an object of a type for which a specialization exist, the 
+-- serializer will use that for that object's binary representation; all objects inside the 
+-- structure without such a specialization will be serialized using the generic method.
+-------------------------------------
 module Data.Serialization.Generic (
+                                     -- | @Data.Serialization@ is exposed, with the exception of the
+                                     -- functions serialize and deserialize. These have been given
+                                     -- a different, generic, definition in this module.
                                      module Data.Serialization,
+                                     
+                                     -- * Generic serialization
                                      serializeWith,
                                      serialize,
                                      deserializeWith,
                                      deserialize,
+                                     
+                                     -- * Settings
                                      SerializationSettings,
                                      defaultSettings,
+                                     
+                                     -- * Adding specializations
                                      addSerializableSpecialization,
                                      addSerSpec
                                   ) where
@@ -65,14 +92,20 @@ concatWithLengths :: [[Byte]] -> [Byte]
 concatWithLengths [] = []
 concatWithLengths (x:xs) = varbytes (length x) ++ x ++ concatWithLengths xs
 
+-------------------------------------------
+
+-- The method used by the generic serializer to convert an arbitrary data structure to its binary
+-- representation.
 genericToBytes :: (Data a) => SerializationSettings -> a -> IO [Byte]
 genericToBytes s d = do ps <- newPtrSet
+                        -- Build a 'reference map' from 'PtrKeys' to substructure serializations.
                         (key, rm) <- genericToBytes' s d (ps, M.empty)
                         return $ varbytes key ++ serializeRefMap rm
 
  where serializeRefMap :: RefMap -> [Byte]
        serializeRefMap = concatWithLengths . map (\(k,bs) -> varbytes k ++ bs) . M.toList
 
+-- Convert a structure to a RefMap. Shared references will be serialized once.
 genericToBytes' :: (Data a) => SerializationSettings -> a -> (PtrSet, RefMap) -> IO (PtrKey, RefMap)
 genericToBytes' set d (ps, rm) = do memb <- ptrSetMember d ps
                                     case memb of
@@ -104,10 +137,13 @@ genericToBytes' set d (ps, rm) = do memb <- ptrSetMember d ps
                          return (varbytes key, rm')
 
 
+-- Helper object for using gunfold to consume bytes and convert them in a DeRefMap.
 data Unfolder r = Unfolder ([Byte], DeRefMap) r              
  
+-- Left objects will yet have to be deserialized, while Right ones already are.
 type DeRefMap = Map PtrKey (Either [Byte] Dynamic)
  
+-- Inverse of genericToBytes.
 genericFromBytes :: (Data a) => SerializationSettings -> [Byte] -> IO a
 genericFromBytes s b = do let (k, b') = varunbytes b
                           let rm = deRefMap b'
@@ -152,10 +188,14 @@ genericFromBytes' set bs drm = result
                             Just (Left bs) -> let (x,m) = genericFromBytes' set bs dm
                                                in (x, M.insert key (Right $ toDyn x) dm)
                             _ -> error "Corrupt data: key not in reference map."
+                            
+-------------------------------------------
        
 genericTest :: (Data a) => a -> IO a
 genericTest x = genericToBytes defaultSettings x >>= genericFromBytes defaultSettings
 
+-- Compute a checksum over the layout and contents of a data structure, so version inconsisancies 
+-- can be detected.
 genericVersionID :: (Data a) => SerializationSettings -> a -> VersionID
 genericVersionID set x = combineVIDs $ [settingsVID set, structureID S.empty $ dataTypeOf x] 
 -- Take checksum over characters in data type name and constructor kinds.
@@ -184,6 +224,12 @@ genericVersionID set x = combineVIDs $ [settingsVID set, structureID S.empty $ d
 gsTypeID :: Data a => a -> TypeID
 gsTypeID x = '$' : show (typeOf x)
 
+-- | Apply the generic serializer to some value, using certain settings. Functions from 
+-- 'Data.Serialization' (such as 'store' and 'load') can be used to handle the resulting
+-- 'Serialized' object.
+-- 
+-- This function exists in the IO-monad because that is required for detection of sharing (multiple 
+-- pointers referring to the same object).
 serializeWith :: Data a => SerializationSettings -> a -> IO Serialized
 serializeWith set x = do packet <- genericToBytes set x
                          return Serialized {
@@ -194,9 +240,17 @@ serializeWith set x = do packet <- genericToBytes set x
                                   dataPacket = B.pack $ packet
                                  }
 
+-- | Serialize with default settings. See 'serializeWith' and 'defaultSettings'.
 serialize :: Data a => a -> IO Serialized
 serialize = serializeWith defaultSettings
 
+-- | Decodes a @Serialized@ object back into a Haskell structure, using certain settings. In order 
+-- to assert the type is correct, @Nothing@ is returned when the inferred type is not correct.
+--
+-- The same 'SerializationSettings' should be used as for the serialization of the object in 
+-- question.
+--
+-- When a version incompatibility or other error occurs, a @SerializationException@ is thrown.
 deserializeWith :: Data a => SerializationSettings -> Serialized -> IO (Maybe a)
 deserializeWith set (Serialized tid sv dp) = do result <- genericFromBytes set $ B.unpack dp
                                                 if tid /= gsTypeID result 
@@ -206,5 +260,6 @@ deserializeWith set (Serialized tid sv dp) = do result <- genericFromBytes set $
                                                    then error "Version of serializer used for this object does not match the current one."
                                                    else return $ Just result
 
+-- | Deserialize with default settings. See 'deserializeWith' and 'defaultSettings'.
 deserialize :: Data a => Serialized -> IO (Maybe a)
 deserialize = deserializeWith defaultSettings
