@@ -40,8 +40,11 @@ type TypeID = String
 
 -- Returns a unique identifier for the type of a Typeable value.
 typeID :: Typeable a => a -> TypeID
-typeID x = concat [tyConPackage t, ".", tyConModule t, ".", show $ typeOf x]
+typeID x = concat [tyConPackage t, ".", tyConModule t, ".", afterDot $ show $ typeOf x]
  where t = typeRepTyCon $ typeOf x
+       afterDot str = case dropWhile (/= '.') str of
+                            []     -> str
+                            (_:xs) -> xs
 
 ------------------
 
