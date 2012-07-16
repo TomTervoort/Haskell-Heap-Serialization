@@ -62,6 +62,7 @@ import qualified Data.ByteString.Lazy as BL
 import Data.Word
 import Data.Bits
 import Data.Typeable
+import Data.Data
 
 import System.Environment
 import Data.Text (Text)
@@ -87,7 +88,7 @@ data SerializationException = IncompatibleLibraries
                             | InvalidSerializedData
                                 -- ^When the data read from a file or such does not conform to the
                                 -- protocol.
-                            | DeserializationError String --TODO: utilise this
+                            | DeserializationError String
                                 -- ^When deserializing, an exception was thrown by the instance of 
                                 -- @Serializable. Contains a description.
                             deriving (Eq, Typeable)
@@ -103,10 +104,6 @@ instance Show SerializationException where
 instance Exception SerializationException
  
 -----------------
-
--- Returns a unique identifier for the type of a Typeable value.
-typeID :: Typeable a => a -> TypeID
-typeID = show . typeOf
 
 -- Current version of the serialization library. This String is included in serialized packages.
 libraryVersion :: String
@@ -168,7 +165,7 @@ storeInByteString obj = do -- pid <- programVersionID
 loadFromByteString :: LazyByteString -> IO (Serialized, LazyByteString)
 loadFromByteString str = do let str0 = BL.unpack str
                             let (lid, str1) = splitAt (length libraryVersion) str0
-                            let (vid, str2) = splitAt 9 str1
+                            let (vid, str2) = splitAt 8 str1
                             let (tid, str3) = (takeWhile (/= 0) str2, drop (length tid + 1) str2)                            
                             let (len, str4) = varunbytes str3
                             let (dat, str5) = splitAt len str4
@@ -201,7 +198,7 @@ hStore h ob = storeInByteString ob >>= BL.hPutStr h
 hStores :: Handle -> [Serialized] -> IO ()
 hStores h obs = forM_ obs $ hStore h
 
--- | Loads multiple serialized objects from a handle. Note: this handle may not contain any data
+-- | Loads multiple serialized objects from a handle. Note: this handle should not contain any data
 -- besides these objects.
 hLoads :: Handle -> IO [Serialized]
 hLoads h = BL.hGetContents h >>= loadContent
@@ -210,8 +207,8 @@ hLoads h = BL.hGetContents h >>= loadContent
                                           xs <- loadContent rest
                                           return (x:xs)
                                           
--- | Loads a single serialized object from a handle. Note: this handle may not contain any data
--- besides this objects.
+-- | Loads a single serialized object from a handle. Note: this handle should not contain any data
+-- besides this object.
 hLoad :: Handle -> IO Serialized
 -- TODO: only read neccessary part.
 hLoad h = do xs <- hLoads h
@@ -252,16 +249,33 @@ instance Serializable () where
 instance (Serializable a, Serializable b) => Serializable (a,b) where
  serialVersionID _ = VersionID 1
  dependencies t = [serialVersionID $ fst t, serialVersionID $ snd t]
- toBytes (a,b) = toBytes [Left a, Right b]
- fromBytes str = let [Left a, Right b] = fromBytes str in (a,b)
+ constBytesSize t = do a <- constBytesSize $ fst t
+                       b <- constBytesSize $ snd t
+                       return $ a + b
+                       
+ toBytes (a,b) = lenInfo ++ aBytes ++ toBytes b
+  where aBytes = toBytes a
+        lenInfo = case constBytesSize a of
+                   Nothing -> varbytes $ length aBytes
+                   Just _  -> []
+ fromBytes bs = let (aLength, bs') = case constBytesSize $ fst result of
+                                      Nothing -> varunbytes bs
+                                      Just n  -> (n, bs)
+                    (a, b) = splitAt aLength bs'
+                    result = (fromBytes a, fromBytes b)
+                 in result
  
+leftType  :: Either a b -> a
+rightType :: Either a b -> b
+leftType = undefined
+rightType = undefined 
+
 instance (Serializable a, Serializable b) => Serializable (Either a b) where
  serialVersionID _ = VersionID 1
- dependencies e = [serialVersionID $ lefttype e, serialVersionID $ righttype e]
-  where lefttype  :: Either a b -> a
-        righttype :: Either a b -> b
-        lefttype = undefined
-        righttype = undefined
+ dependencies e = [serialVersionID $ leftType e, serialVersionID $ rightType e]
+ constBytesSize e = do l <- constBytesSize $ leftType e
+                       r <- constBytesSize $ rightType e
+                       return $ l + r
  toBytes (Left  x) = 0 : toBytes x
  toBytes (Right x) = 1 : toBytes x
  fromBytes (0:xs) = Left  $ fromBytes xs
@@ -364,6 +378,7 @@ instance Serializable a => Serializable [a] where
  
 instance Serializable a => Serializable (Maybe a) where
  serialVersionID _ = VersionID 1
+ dependencies m = [serialVersionID $ fromJust m]
  toBytes Nothing = []
  toBytes (Just x) | constBytesSize x > Just 0 = toBytes x
                   | otherwise = 0 : toBytes x

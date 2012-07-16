@@ -222,7 +222,7 @@ genericVersionID set x = combineVIDs $ [settingsVID set, structureID S.empty $ d
 -----------------------
 
 gsTypeID :: Data a => a -> TypeID
-gsTypeID x = '$' : show (typeOf x)
+gsTypeID x = '$' : typeID x
 
 -- | Apply the generic serializer to some value, using certain settings. Functions from 
 -- 'Data.Serialization' (such as 'store' and 'load') can be used to handle the resulting

@@ -38,6 +38,11 @@ checksumInt x = let c = checksum x
 -- Unique identifier for types.
 type TypeID = String
 
+-- Returns a unique identifier for the type of a Typeable value.
+typeID :: Typeable a => a -> TypeID
+typeID x = concat [tyConPackage t, ".", tyConModule t, ".", show $ typeOf x]
+ where t = typeRepTyCon $ typeOf x
+
 ------------------
 
 someListToBytes :: (a -> [Byte]) -> [a] -> [Byte]
