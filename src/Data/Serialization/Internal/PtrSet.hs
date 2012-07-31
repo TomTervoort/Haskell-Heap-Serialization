@@ -85,24 +85,33 @@ someSname :: Typeable a => StableName a -> SomeStableName
 someSname n = SomeStableName (typeOf $ inner n) n
  where inner = undefined :: StableName a -> a
 
+-- Create an empty PtrSet.
 newPtrSet :: IO PtrSet
-newPtrSet = do table <- HT.new eq hasher
+newPtrSet = do -- Create a hash table with the specified equality and hash functions.
+               table <- HT.new eq hasher
                key <- newIORef 0
                return $ PtrSet table key
+       -- Determine equality by comparing types and coercing stable names if those are equal.
  where eq (SomeStableName t1 s1) (SomeStableName t2 s2)
              | t1 == t2 = unsafeCoerce s1 == s2
              | otherwise = False
+        -- Use the hash f
        hasher (SomeStableName _ s) = HT.hashInt $ hashStableName s
 
+-- Add the pointer to a value to the set and return the associated identifier.
 ptrSetAdd :: Typeable a => a -> PtrSet -> IO PtrKey
-ptrSetAdd x ps = do sname <- makeStableName x
+ptrSetAdd x ps = do -- Create a stable name.
+                    sname <- makeStableName x
+                    -- Increment counter to get key.
                     key <- readIORef $ nextKey ps
+                    -- Insert into table and return key.
                     HT.insert (table ps) (someSname sname) key
                     writeIORef (nextKey ps) (key + 1)
                     return key
 
-
+-- Check whether a pointer to this value has been stored in the set. If so, the identifier is returned.
 ptrSetMember :: Typeable a => a -> PtrSet -> IO (Maybe PtrKey)
-ptrSetMember x ps = do sname <- makeStableName x
+ptrSetMember x ps = do -- Create a stable name for the pointer and look it up in the table.
+                       sname <- makeStableName x
                        HT.lookup (table ps) $ someSname sname
 
