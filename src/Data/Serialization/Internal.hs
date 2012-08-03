@@ -47,7 +47,7 @@ typeID x = concat [tyConPackage t, ".", tyConModule t, ".", afterDot $ show $ ty
        afterDot str = case dropWhile (/= '.') str of
                             []     -> str
                             (_:xs) -> xs
-#if __GLASGOW_HASKELL__ < 720
+#if __GLASGOW_HASKELL__ < 702
        -- Redefine tyConPackage and tyConModule if they are not yet exposed.
        tyConPackage = const ""
        tyConModule  = tyconModule . show
