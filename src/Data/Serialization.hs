@@ -313,7 +313,7 @@ instance (IArray ar e, Typeable2 ar, Ix i, Serializable i, Serializable e) => Se
  fromBytes ar = listArray bnds els
   where (bnds, els) = fromBytes ar
   
-instance Serializable Byte where
+instance Serializable Word8 where
  serialVersionID _ = VersionID 1
  toBytes b = [b]
  fromBytes [b] = b

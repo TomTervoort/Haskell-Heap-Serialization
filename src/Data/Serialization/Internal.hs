@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 module Data.Serialization.Internal where
 
 import Data.Serialization.Internal.IntegralBytes
@@ -17,8 +18,7 @@ import qualified Data.ByteString.Lazy as BL
 import Data.Word
 import Data.Bits
 import Data.Typeable
-
-
+import Data.Data
 
                 
 -- Computes a checksum using Fletcher's algorithm.
@@ -38,6 +38,8 @@ checksumInt x = let c = checksum x
 -- Unique identifier for types.
 type TypeID = String
 
+
+
 -- Returns a unique identifier for the type of a Typeable value.
 typeID :: Typeable a => a -> TypeID
 typeID x = concat [tyConPackage t, ".", tyConModule t, ".", afterDot $ show $ typeOf x]
@@ -45,6 +47,13 @@ typeID x = concat [tyConPackage t, ".", tyConModule t, ".", afterDot $ show $ ty
        afterDot str = case dropWhile (/= '.') str of
                             []     -> str
                             (_:xs) -> xs
+#if __GLASGOW_HASKELL__ < 720
+       -- Redefine tyConPackage and tyConModule if they are not yet exposed.
+       tyConPackage = const ""
+       tyConModule  = tyconModule . show
+    
+{-# WARNING typeID "Before GHC 7.2, there is a slight chance of typeID not behacing correctly." #-}
+#endif
 
 ------------------
 
