@@ -52,7 +52,7 @@ typeID x = concat [tyConPackage t, ".", tyConModule t, ".", afterDot $ show $ ty
        tyConPackage = const ""
        tyConModule  = tyconModule . show
     
-{-# WARNING typeID "Before GHC 7.2, there is a slight chance of typeID not behacing correctly." #-}
+{-# WARNING typeID "Before GHC 7.2, there is a chance of typeID not behaving correctly in some situations." #-}
 #endif
 
 ------------------

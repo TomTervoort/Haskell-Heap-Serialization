@@ -81,8 +81,7 @@ data Test3 a b = Blaat a (Either a b) b
                
 -----
 
-type RefMap = Map PtrKey [Byte]
-
+-- 'shorter a b' is equivalent to 'length a < length b'.
 shorter :: [a] -> Int -> Bool
 shorter _ 0  = False
 shorter [] _ = True
@@ -94,47 +93,61 @@ concatWithLengths (x:xs) = varbytes (length x) ++ x ++ concatWithLengths xs
 
 -------------------------------------------
 
+-- A 'reference map' from PtrKeys to their binary representation.
+type RefMap = Map PtrKey [Byte]
+
 -- The method used by the generic serializer to convert an arbitrary data structure to its binary
 -- representation.
 genericToBytes :: (Data a) => SerializationSettings -> a -> IO [Byte]
 genericToBytes s d = do ps <- newPtrSet
                         -- Build a 'reference map' from 'PtrKeys' to substructure serializations.
                         (key, rm) <- genericToBytes' s d (ps, M.empty)
+                        -- Serialize the RefMap and prepend it 
                         return $ varbytes key ++ serializeRefMap rm
 
- where serializeRefMap :: RefMap -> [Byte]
+ where -- Convert a RefMap to a byte sequence.
+       serializeRefMap :: RefMap -> [Byte]
        serializeRefMap = concatWithLengths . map (\(k,bs) -> varbytes k ++ bs) . M.toList
 
--- Convert a structure to a RefMap. Shared references will be serialized once.
+-- Convert a structure to a RefMap. Shared references will be serialized once. Returns the key to the 'entry point' in
+-- the RefMap.
 genericToBytes' :: (Data a) => SerializationSettings -> a -> (PtrSet, RefMap) -> IO (PtrKey, RefMap)
-genericToBytes' set d (ps, rm) = do memb <- ptrSetMember d ps
+genericToBytes' set d (ps, rm) = do -- Check whether the object already resides in the PtrSet.
+                                    memb <- ptrSetMember d ps
                                     case memb of
+                                     -- If so, return its PtrKey.
                                      Just k  -> return (k, rm)
+                                     -- Otherwise, serialize it and add it to the PtrSet.
                                      Nothing -> do (bs, rm') <- use (specializedSerializer set d)
                                                    k <- ptrSetAdd d ps
                                                    let rm'' = M.insert k bs rm'
                                                    return (k, rm'')
  
+ -- If a serializer for a structure of this type exists, use its toBytes function to encode it. Otherwise use the 
+ -- generic serializer for algebraic datatypes.
  where use s = case s of
                 Serializer to _ -> return (to d, rm)
                 NoSerializer    -> case dataTypeRep $ dataTypeOf d of
-                                    AlgRep ctors -> do let fs = gmapQ (\d rm -> genericToBytes' set d (ps, rm)) d
+                                    AlgRep ctors -> do -- Recursively apply serializer to create functions of type
+                                                       -- RefMap -> IO (PtrKey, RefMap).
+                                                       let fs = gmapQ (\d rm -> genericToBytes' set d (ps, rm)) d
+                                                       -- Maintain an IORef containing the RefMap.
                                                        ref <- newIORef rm
+                                                       -- Sequentially execute the serializers of the children on the 
+                                                       -- RefMap.
                                                        xs <- forM fs
                                                                (\f -> do (k, rm') <- readIORef ref >>= f
                                                                          writeIORef ref rm'
                                                                          return $ varbytes k)
                                                        rm' <- readIORef ref
+                                                       -- Prepend the index of the data constructor, but only if there
+                                                       -- is more than one.
                                                        let ctorRep | shorter ctors 2 = []
                                                                    | otherwise = varbytes (constrIndex $ toConstr d)
                                                        return (ctorRep ++ concat xs, rm')
-                                    _ -> error $ "A specialized serializer is required for type " 
+                                    _ -> -- This is not an algebraic datatype, nor has it got a specialized serializer.
+                                         error $ "A specialized serializer is required for type " 
                                                     ++ dataTypeName (dataTypeOf d)
-                Serializer1 to1 _ -> to1 toByter d rm
-                                       
-       toByter :: ToByter IO RefMap
-       toByter d rm = do (key, rm') <- genericToBytes' set d (ps, rm)
-                         return (varbytes key, rm')
 
 
 -- Helper object for using gunfold to consume bytes and convert them in a DeRefMap.
@@ -145,11 +158,16 @@ type DeRefMap = Map PtrKey (Either [Byte] Dynamic)
  
 -- Inverse of genericToBytes.
 genericFromBytes :: (Data a) => SerializationSettings -> [Byte] -> IO a
-genericFromBytes s b = do let (k, b') = varunbytes b
+genericFromBytes s b = do -- Obtain the root PtrKey.
+                          let (k, b') = varunbytes b
+                          -- Obtain the DeRefMap (with values still being [Byte]'s).
                           let rm = deRefMap b'
+                          -- Lookup the root key.
                           let (Just (Left b'')) = M.lookup k rm
+                          -- Apply the recursive deserializer to the assoiated byte sequence.
                           return . fst $ genericFromBytes' s b'' rm
- where deRefMap :: [Byte] -> DeRefMap
+ where -- Decodes a RefMap as a DeRefMap.
+       deRefMap :: [Byte] -> DeRefMap
        deRefMap [] = M.empty
        deRefMap xs = let (len, xs1) = varunbytes xs
                          (bs', xs2) = splitAt len xs1
@@ -157,31 +175,40 @@ genericFromBytes s b = do let (k, b') = varunbytes b
                       in M.insert key (Left bs) $ deRefMap xs2
 
 
+-- Recursive generic deserializer. Also returns an updated DeRefMap.
 genericFromBytes' :: Data a => SerializationSettings -> [Byte] -> DeRefMap -> (a, DeRefMap)
 genericFromBytes' set bs drm = result
- where result = case specializedSerializer set $ fst result of
+ where result = -- Check whether there exists a specialized serializer for the desired type.
+                case specializedSerializer set $ fst result of
+                 -- If so, use it.
                  Serializer _ from -> (from bs, drm)
+                 -- Otherwise use the generic deserializer.
                  NoSerializer      -> case dataTypeRep dtype of
                                        AlgRep ctors -> 
+                                        -- Determine to Constr to use.
                                         let (i,xs) | length ctors == 1 = (1,bs)
                                                    | otherwise = varunbytes bs
                                             ctor = ctors !! (i - 1)
+                                            -- Apply the generic infold.
                                             (Unfolder (left, dm) x) = gunfold unfolder (Unfolder (xs,drm)) ctor
                                          in if null left
                                              then (x, dm)
                                              else error $ "Not all bytes are consumed when deserializing as "
                                                             ++ dataTypeName dtype ++ "."
+
+                                       -- Object must be an algebraic datatype.
                                        _                 -> error $ "A specialized serializer for " ++ dataTypeName dtype
                                                                       ++ " is required."
-                 Serializer1 _ _ -> undefined --TODO
-                 
        dtype = dataTypeOf $ fst result
        
+       -- Helper for gunfold that consumes a [Byte], updates a DeRefMap and constructs a data structure.
        unfolder :: Data b => Unfolder (b -> r) -> Unfolder r
        unfolder (Unfolder (bs, dm) f) = let (key, rest) = varunbytes bs
                                             x = lookupData dm key
                                          in Unfolder (rest, snd x) $ f (fst x)
                                          
+       -- Lookups up an object from the DeRefMap. If it has not yet been deserialized, that will be done through
+       -- genericFromBytes'. An updated DeRefMap is also returned.
        lookupData :: Data a => DeRefMap -> PtrKey -> (a, DeRefMap)
        lookupData dm key = case M.lookup key dm of
                             Just (Right d) -> (fromDyn d undefined, dm)
